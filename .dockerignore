@@ -1,0 +1,11 @@
+node_modules
+data
+test
+.git
+.claude
+.env
+.env.*
+!.env.example
+*.md
+propsel-check.txt
+deploy

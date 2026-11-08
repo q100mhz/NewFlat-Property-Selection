@@ -1,229 +1,270 @@
-# Перенос на VPS 89.111.170.193
+# Установка на сервер 89.111.170.193
 
-Пошаговая инструкция для чистого сервера на **Ubuntu 22.04 / 24.04** (для Debian 12 команды те же). Все команды выполняются от `root`, если не сказано иное.
+Инструкция составлена под текущую конфигурацию сервера: Ubuntu 24.04, nginx + certbot, приложения в Docker на `127.0.0.1`, ufw уже настроен.
 
-Итог: приложение работает как служба systemd от отдельного пользователя `propsel` в `/opt/propertyselection`. Снаружи его закрывает nginx с HTTPS на `https://propertyselection.itb2bhost.ru`.
+**Как приложение встанет на сервер:**
 
----
+| Что | Где |
+|---|---|
+| Код | `/opt/propertyselection` (рядом с `/opt/publisher` и `/opt/welegalcompliance`) |
+| Контейнер | `propertyselection-app-1`, порт `127.0.0.1:3200`, не больше 384 МБ памяти |
+| Данные (база, кэш фото) | Docker-том `propertyselection_data` |
+| Сайт nginx | `/etc/nginx/sites-available/propertyselection.itb2bhost.ru.conf` |
+| Сертификат | отдельный, только для `propertyselection.itb2bhost.ru` |
 
-## 0. DNS (до всего остального)
+**Что не трогаем:** существующие сайты nginx, контейнеры, брандмауэр, системные пакеты, часовой пояс. Каждая команда либо создаёт новые файлы, либо касается только этого приложения. Перед каждой перезагрузкой nginx идёт проверка `nginx -t`: если она покажет ошибку, nginx не перезагружается и ваши сайты продолжают работать.
 
-В DNS-зоне `itb2bhost.ru` создайте A-запись:
-
-```
-propertyselection   A   89.111.170.193
-```
-
-Проверка (с вашего компьютера; запись может применяться от нескольких минут до пары часов):
-
-```bash
-dig +short propertyselection.itb2bhost.ru
-```
-
-Должно вернуться `89.111.170.193`. Без этого не получится выпустить SSL-сертификат (шаг 7).
-
-## 1. Вход на сервер и базовая настройка
+Все команды выполняются на сервере от `root`:
 
 ```bash
 ssh root@89.111.170.193
 ```
 
+---
+
+## Шаг 1. Проверка перед началом
+
 ```bash
-apt update && apt -y upgrade
-apt -y install curl git nginx sqlite3 ufw build-essential python3
-timedatectl set-timezone Asia/Yekaterinburg
+ss -tln | grep -E ':3200\b' || echo "порт 3200 свободен"
+getent hosts propertyselection.itb2bhost.ru
+ls /opt/propertyselection 2>/dev/null || echo "папка свободна"
 ```
 
-`build-essential` и `python3` нужны на случай, если модуль SQLite придётся собирать из исходников. Обычно скачивается готовая сборка.
+Ожидается: `порт 3200 свободен`, адрес `89.111.170.193` и `папка свободна`.
 
-Брандмауэр (SSH, HTTP, HTTPS):
+## Шаг 2. Загрузка кода
 
 ```bash
-ufw allow OpenSSH
-ufw allow 'Nginx Full'
-ufw --force enable
+git clone https://github.com/q100mhz/NewFlat-Property-Selection.git /opt/propertyselection
+cd /opt/propertyselection
+git log --oneline -1
 ```
 
-## 2. Node.js 22 LTS
+Если репозиторий приватный, git спросит логин и пароль. Вместо пароля введите токен GitHub: Settings → Developer settings → Personal access tokens → Fine-grained, доступ **Contents: Read-only** только к этому репозиторию.
+
+## Шаг 3. Настройки и пробная сборка
+
+Создайте файл настроек и сгенерируйте секрет:
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-apt -y install nodejs
-node -v   # должно быть v22.x
+cd /opt/propertyselection
+cp .env.example .env
+chmod 600 .env
+openssl rand -hex 32
 ```
 
-## 3. Пользователь и код приложения
+Откройте файл (`nano .env`; сохранить — Ctrl+O, Enter; выйти — Ctrl+X) и заполните:
 
-```bash
-useradd -r -m -d /opt/propertyselection -s /bin/bash propsel
-sudo -u propsel git clone https://github.com/q100mhz/NewFlat-Property-Selection.git /opt/propertyselection/app
+```
+BASE_URL=https://propertyselection.itb2bhost.ru
+SESSION_SECRET=<строка из openssl rand -hex 32>
+B24_ALLOWED_DOMAINS=<домен вашего портала, например agency.bitrix24.ru>
+AGENCY_PHONE=<телефон агентства, например +7 (3452) 00-00-00>
 ```
 
-> Если репозиторий **приватный**, git попросит логин и пароль. Вместо пароля нужен Personal Access Token (GitHub → Settings → Developer settings → Fine-grained tokens, доступ только на чтение к этому репозиторию). Другой вариант — deploy key: `sudo -u propsel ssh-keygen -t ed25519`, публичный ключ добавить в репозиторий (Settings → Deploy keys) и клонировать по `git@github.com:q100mhz/NewFlat-Property-Selection.git`.
-
-Установка зависимостей (только рабочие, без dev):
-
 ```bash
-cd /opt/propertyselection/app
-sudo -u propsel npm ci --omit=dev
+nano .env
 ```
 
-## 4. Настройка `.env`
+`B24_CLIENT_ID` и `B24_CLIENT_SECRET` пока оставьте как есть — их выдаст Битрикс24 на шаге 5. Строки `PORT` и `HOST` не важны: в Docker их задаёт `docker-compose.yml`.
+
+Соберите образ. Он только собирается и пока не запускается; займёт 2–4 минуты:
 
 ```bash
-sudo -u propsel cp .env.example .env
-openssl rand -hex 32          # скопируйте результат — это SESSION_SECRET
-sudo -u propsel nano .env
+docker compose build
+docker images propertyselection-app
 ```
 
-Заполните:
+В конце должна появиться строка с образом `propertyselection-app`.
 
-| Параметр | Значение |
-|---|---|
-| `BASE_URL` | `https://propertyselection.itb2bhost.ru` |
-| `SESSION_SECRET` | строка из `openssl rand -hex 32` |
-| `B24_ALLOWED_DOMAINS` | домен портала агентства, например `agency.bitrix24.ru` |
-| `AGENCY_PHONE` | телефон агентства для страницы клиента |
-| `B24_CLIENT_ID`, `B24_CLIENT_SECRET` | пока оставьте пустыми — их выдаст Битрикс24 на шаге 8 |
-
-Права на файл с секретами:
+## Шаг 4. Сайт в nginx и SSL-сертификат
 
 ```bash
-chmod 600 /opt/propertyselection/app/.env
+cp /opt/propertyselection/deploy/nginx.conf /etc/nginx/sites-available/propertyselection.itb2bhost.ru.conf
+ln -s /etc/nginx/sites-available/propertyselection.itb2bhost.ru.conf /etc/nginx/sites-enabled/
+nginx -t
 ```
 
-## 5. Служба systemd
-
-Файл службы в репозитории рассчитан на путь `/opt/propertyselection`, а код лежит в `/opt/propertyselection/app`. Поэтому поправим путь при копировании:
+**Только если `nginx -t` написал `syntax is ok` и `test is successful`**, перезагрузите nginx:
 
 ```bash
-sed 's#WorkingDirectory=/opt/propertyselection#WorkingDirectory=/opt/propertyselection/app#' \
-  /opt/propertyselection/app/deploy/propertyselection.service > /etc/systemd/system/propertyselection.service
-systemctl daemon-reload
-systemctl enable propertyselection
+systemctl reload nginx
 ```
 
-Запускать пока не нужно: без ключей Битрикс24 приложение завершится с сообщением о незаполненных параметрах. Запустим на шаге 8.
+> Если `nginx -t` показал ошибку, не перезагружайте nginx. Уберите новый сайт командой `rm /etc/nginx/sites-enabled/propertyselection.itb2bhost.ru.conf` и пришлите мне текст ошибки.
 
-## 6. nginx (пока по HTTP — для выпуска сертификата)
-
-Конфиг в репозитории уже ссылается на сертификат, которого ещё нет, поэтому сначала временный HTTP-конфиг:
+Выпустите сертификат. certbot сам добавит HTTPS и редирект в конфиг нового сайта, как он уже делал для остальных:
 
 ```bash
-cat > /etc/nginx/sites-available/propertyselection.itb2bhost.ru <<'EOF'
-server {
-    listen 80;
-    server_name propertyselection.itb2bhost.ru;
-    location / { proxy_pass http://127.0.0.1:3000; proxy_set_header Host $host; }
-}
-EOF
-ln -sf /etc/nginx/sites-available/propertyselection.itb2bhost.ru /etc/nginx/sites-enabled/
-rm -f /etc/nginx/sites-enabled/default
+certbot --nginx -d propertyselection.itb2bhost.ru --redirect
+```
+
+Проверка:
+
+```bash
 nginx -t && systemctl reload nginx
+curl -sI https://propertyselection.itb2bhost.ru | head -1
 ```
 
-## 7. SSL-сертификат Let's Encrypt
+Пока приложение не запущено, ответ будет `HTTP/2 502` — это нормально. Важно, что HTTPS отвечает и нет ошибок сертификата.
+
+## Шаг 5. Регистрация приложения в Битрикс24
+
+На портале (нужны права администратора):
+
+1. **Разработчикам** (или **Приложения → Разработчикам**) → **Другое** → **Локальное приложение**.
+2. Тип: **Серверное**. Галочку «Использует только API» **не ставить**.
+3. Название: `Подборка`.
+4. Путь вашего обработчика: `https://propertyselection.itb2bhost.ru/b24/handler`
+5. Путь для первоначальной установки: `https://propertyselection.itb2bhost.ru/b24/install`
+6. Права: **CRM (crm)**, **Встраивание приложений (placement)**, **Чат и уведомления (im)**, **Пользователи (user)**.
+7. **Сохранить.** Откроется страница с «Кодом приложения» (`local.…`) и «Ключом приложения».
+
+Пока **не открывайте** приложение на портале: сначала его нужно запустить на сервере.
+
+Впишите ключи в настройки:
 
 ```bash
-apt -y install certbot python3-certbot-nginx
-certbot --nginx -d propertyselection.itb2bhost.ru --agree-tos -m <ваш-email> --redirect
+cd /opt/propertyselection
+nano .env
 ```
 
-Теперь поставим полноценный конфиг из репозитория (HTTPS, редирект, заголовки прокси):
+```
+B24_CLIENT_ID=<Код приложения, local.xxxxxxxx.xxxxxxxx>
+B24_CLIENT_SECRET=<Ключ приложения>
+```
+
+## Шаг 6. Запуск
 
 ```bash
-cp /opt/propertyselection/app/deploy/nginx.conf /etc/nginx/sites-available/propertyselection.itb2bhost.ru
-nginx -t && systemctl reload nginx
+cd /opt/propertyselection
+docker compose up -d
+docker compose ps
+docker compose logs --tail 30
 ```
 
-Сертификат продлевается автоматически (`systemctl list-timers | grep certbot`).
+В `ps` у контейнера должен быть статус `Up` (через полминуты — `Up (healthy)`). В логах должна быть строка `Подборка: http://0.0.0.0:3000`.
 
-## 8. Регистрация приложения в Битрикс24 и запуск
+> Если контейнер перезапускается и в логе написано «Не заданы обязательные параметры в .env», проверьте `SESSION_SECRET` (не короче 32 символов), `B24_CLIENT_ID` и `B24_CLIENT_SECRET`, затем выполните `docker compose up -d` ещё раз.
 
-1. Портал → **Разработчикам → Другое → Локальное приложение**.
-2. **Серверное**, «Использует только API» — **нет**.
-3. Путь обработчика: `https://propertyselection.itb2bhost.ru/b24/handler`
-4. Путь первоначальной установки: `https://propertyselection.itb2bhost.ru/b24/install`
-5. Права: **CRM**, **Встраивание приложений**, **Чат и уведомления**, **Пользователи**.
-6. Сохраните. Скопируйте «Код приложения» → `B24_CLIENT_ID`, «Ключ приложения» → `B24_CLIENT_SECRET` в `.env`:
+Проверка снаружи:
+
+```bash
+curl -s https://propertyselection.itb2bhost.ru/health
+```
+
+Ожидается `{"ok":true}`.
+
+Сразу после запуска начинается первая загрузка каталога newflat72.ru. Она занимает 5–10 минут; ход виден в логе (выход — Ctrl+C):
+
+```bash
+docker compose logs -f
+```
+
+В конце будет строка `[crawl] готово: … карточек`.
+
+## Шаг 7. Установка в Битрикс24
+
+1. На портале откройте **Приложения** → найдите «Подборка» (или откройте его из списка локальных приложений) → **открыть**.
+2. Должно появиться сообщение **«Приложение «Подборка» установлено»**.
+3. Проверьте лог установки на сервере:
 
    ```bash
-   sudo -u propsel nano /opt/propertyselection/app/.env
-   systemctl start propertyselection
-   systemctl status propertyselection --no-pager
-   curl -s https://propertyselection.itb2bhost.ru/health   # {"ok":true}
+   docker compose -f /opt/propertyselection/docker-compose.yml logs | grep install
    ```
 
-7. Подождите 5–10 минут, пока загрузится каталог. Ход загрузки видно в логе:
+   Нужна строка вида `[install] ваш-портал.bitrix24.ru [{"placement":"CRM_LEAD_DETAIL_TAB","ok":true},{"placement":"CRM_DEAL_DETAIL_TAB","ok":true}]`.
 
-   ```bash
-   journalctl -u propertyselection -f
-   ```
+## Шаг 8. Проверка работы
 
-   В конце будет строка `[crawl] готово: … карточек`.
-8. В Битрикс24 откройте приложение (раздел «Приложения» или ссылка из списка локальных приложений). Пройдёт установка: появится сообщение «Приложение установлено», и в карточках лидов и сделок появится вкладка **«Подборка»**.
-
-## 9. Проверка после установки
-
-- [ ] Откройте любой лид → вкладка «Подборка» → «Новая подборка». Каталог показывает объекты с фото.
-- [ ] Добавьте 2–3 объекта, создайте подборку. В таймлайне лида появился комментарий со ссылкой.
-- [ ] Откройте ссылку с телефона (лучше не из того же браузера). Вам пришло уведомление «Клиент открыл подборку».
+- [ ] Откройте любой лид. Вверху карточки есть вкладка **«Подборка»**.
+- [ ] «Новая подборка»: в каталоге видны объекты с фото, работают фильтры.
+- [ ] Добавьте 2–3 объекта, нажмите «Создать и получить ссылку». В таймлайне лида появился комментарий со ссылкой.
+- [ ] Откройте ссылку на телефоне. Пришло уведомление «Клиент открыл подборку».
 - [ ] Оцените объекты и нажмите «Отправить ответ». В таймлайне появился итог, пришло уведомление, во вкладке видны оценки.
+- [ ] Проверьте то же самое в сделке.
 
-Если что-то не так, см. раздел «Проблемы» ниже.
-
-## 10. Резервные копии базы
-
-Вся ценная информация (подборки и ответы клиентов) лежит в `data/app.sqlite`. Каталог и кэш фото восстанавливаются сами.
+Если что-то не работает, пришлите мне вывод:
 
 ```bash
-mkdir -p /var/backups/propertyselection
-cat > /etc/cron.daily/propertyselection-backup <<'EOF'
-#!/bin/sh
-D=/var/backups/propertyselection
-sqlite3 /opt/propertyselection/app/data/app.sqlite ".backup '$D/app-$(date +%F).sqlite'"
-find "$D" -name 'app-*.sqlite' -mtime +30 -delete
+docker compose -f /opt/propertyselection/docker-compose.yml logs --tail 100
+```
+
+## Шаг 9. Ежедневные резервные копии
+
+Копия базы с подборками и ответами клиентов будет делаться каждую ночь в 03:30. Хранятся 14 последних.
+
+```bash
+cat > /etc/cron.d/propertyselection-backup <<'EOF'
+30 3 * * * root cd /opt/propertyselection && docker compose exec -T app node src/backup.js >> /var/log/propertyselection-backup.log 2>&1
 EOF
-chmod +x /etc/cron.daily/propertyselection-backup
-/etc/cron.daily/propertyselection-backup && ls -la /var/backups/propertyselection
+cd /opt/propertyselection && docker compose exec -T app node src/backup.js
 ```
 
-Желательно периодически забирать копии с сервера к себе (например, `scp root@89.111.170.193:/var/backups/propertyselection/*.sqlite .`) или настроить бэкап у хостера.
-
-## 11. Обновление приложения
-
-Когда в репозитории появятся изменения:
+Последняя команда сразу делает первую копию для проверки. Сами копии лежат на сервере здесь:
 
 ```bash
-cd /opt/propertyselection/app
-sudo -u propsel git pull
-sudo -u propsel npm ci --omit=dev
-systemctl restart propertyselection
-journalctl -u propertyselection -n 30 --no-pager
+ls -la /var/lib/docker/volumes/propertyselection_data/_data/backups/
 ```
 
-Если менялся набор встроек (новые вкладки), переустановите приложение в Битрикс24.
+Скачать копию на свой компьютер (выполнять на Mac, не на сервере):
+
+```bash
+scp 'root@89.111.170.193:/var/lib/docker/volumes/propertyselection_data/_data/backups/*.sqlite' ~/Downloads/
+```
+
+---
+
+## Обновление приложения
+
+```bash
+cd /opt/propertyselection
+git pull
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail 30
+```
+
+Данные в томе при обновлении сохраняются.
 
 ## Полезные команды
 
+Выполнять в папке `/opt/propertyselection`:
+
 | Что | Команда |
 |---|---|
-| Статус | `systemctl status propertyselection` |
-| Логи в реальном времени | `journalctl -u propertyselection -f` |
-| Перезапуск | `systemctl restart propertyselection` |
-| Принудительно обновить каталог | `cd /opt/propertyselection/app && sudo -u propsel npm run crawl` |
-| Размер данных | `du -sh /opt/propertyselection/app/data/*` |
+| Состояние | `docker compose ps` |
+| Логи в реальном времени | `docker compose logs -f` |
+| Перезапуск | `docker compose restart` |
+| Остановка | `docker compose stop` |
+| Память и процессор | `docker stats --no-stream propertyselection-app-1` |
+| Размер данных | `du -sh /var/lib/docker/volumes/propertyselection_data/_data/*` |
+| Обновить каталог вручную | кнопка «Обновить каталог сейчас» на странице приложения в Битрикс24 (нужны права администратора) |
+
+## Полное удаление
+
+Если понадобится убрать приложение с сервера (остальные сайты и контейнеры не затрагиваются):
+
+```bash
+cd /opt/propertyselection && docker compose down        # контейнер; данные пока остаются
+rm /etc/nginx/sites-enabled/propertyselection.itb2bhost.ru.conf
+nginx -t && systemctl reload nginx
+certbot delete --cert-name propertyselection.itb2bhost.ru
+rm /etc/cron.d/propertyselection-backup
+# необратимо — база с подборками:
+# docker volume rm propertyselection_data && rm -rf /opt/propertyselection
+```
 
 ## Проблемы
 
-**Служба сразу останавливается, в логе «Не заданы обязательные параметры».** Не заполнен `.env`: `SESSION_SECRET` (не короче 32 символов), `B24_CLIENT_ID` или `B24_CLIENT_SECRET`.
+**При установке в Битрикс24 ошибка «Токен выдан другому приложению».** Сверьте `B24_CLIENT_ID` в `.env` с «Кодом приложения» в Битрикс24 и выполните `docker compose up -d`. Если они совпадают, а ошибка остаётся, пришлите вывод `docker compose logs --tail 50`: значит, портал возвращает код приложения в другом поле, это правится в коде.
 
-**При установке в Битрикс24 ошибка «Токен выдан другому приложению».** Проверьте, что `B24_CLIENT_ID` в `.env` совпадает с «Кодом приложения» в Битрикс24, и перезапустите службу. Если совпадает, а ошибка остаётся, пришлите строки из `journalctl -u propertyselection` — значит, портал возвращает код приложения в другом поле, это правится в `src/server.js` (функция `verifyAppToken`).
+**Ошибка «Недопустимый домен портала».** Значение `B24_ALLOWED_DOMAINS` не совпадает с доменом портала. Укажите его точно как в адресной строке, без `https://` и `/`, затем выполните `docker compose up -d`.
 
-**Вкладка «Подборка» не появилась.** Переустановите приложение. При установке в логе пишется строка `[install] …` с результатом регистрации вкладок.
+**Вкладка «Подборка» не появилась.** Переустановите приложение на портале. В логе (`grep install`) будет видно, какие вкладки зарегистрировались.
 
 **Нет комментариев в таймлайне или уведомлений.** Проверьте права приложения (CRM, Чат и уведомления) и строки `[timeline]` / `[notify]` в логе.
 
-**Ошибка «Недопустимый домен портала».** Домен портала не совпадает с `B24_ALLOWED_DOMAINS`. Укажите его в точности как в адресной строке, без `https://`.
+**Каталог пустой или неполный.** Сайт newflat72.ru иногда обрывает соединения. Приложение повторяет запросы, а при неполном обходе запускает его снова через 30 минут. Смотрите строки `[crawl]` в логе.
 
-**Каталог пустой или неполный.** Сайт newflat72.ru временами обрывает соединения. Приложение повторяет запросы, а при неполном обходе запускает его снова через 30 минут. Смотрите строки `[crawl]` в логе.
+**После изменения `.env` ничего не поменялось.** `docker compose restart` не перечитывает `.env`. Нужно выполнить `docker compose up -d`.

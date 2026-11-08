@@ -12,7 +12,8 @@
     "start": "node src/server.js",
     "dev": "DEV_MODE=1 node --watch src/server.js",
     "crawl": "node src/catalog/cli.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "backup": "node src/backup.js"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

@@ -20,27 +20,13 @@
 | `public/app/` | Интерфейс вкладки в карточке CRM и страница приложения из меню (статус каталога, журнал подборок). |
 | `public/client/` | Страница подборки для клиента (`/s/<токен>`), рассчитана в первую очередь на телефон. |
 
-Данные хранятся в `data/app.sqlite` (лучше делать резервные копии), кэш фото — в `data/img-cache/`.
+Данные хранятся в `data/app.sqlite` (в Docker — в томе `propertyselection_data`), кэш фото — в `data/img-cache/`. Резервная копия базы: `npm run backup`.
 
-## Развёртывание на VPS
+## Развёртывание
 
-Нужны Node.js 20+ (рекомендуется 22 LTS), nginx и certbot. Подробная пошаговая инструкция для сервера 89.111.170.193 — в [DEPLOY.md](DEPLOY.md).
+Приложение запускается в Docker (`Dockerfile`, `docker-compose.yml`) и слушает `127.0.0.1:3200`; наружу его публикует nginx с сертификатом Let's Encrypt. Пошаговая инструкция для сервера 89.111.170.193 — в [DEPLOY.md](DEPLOY.md).
 
-```bash
-sudo useradd -r -m -d /opt/propertyselection propsel
-sudo -u propsel git clone <репозиторий> /opt/propertyselection   # или скопируйте файлы
-cd /opt/propertyselection
-sudo -u propsel npm ci --omit=dev
-sudo -u propsel cp .env.example .env    # заполните (см. ниже)
-sudo cp deploy/propertyselection.service /etc/systemd/system/
-sudo systemctl enable --now propertyselection
-sudo cp deploy/nginx.conf /etc/nginx/sites-available/propertyselection.itb2bhost.ru
-sudo ln -s /etc/nginx/sites-available/propertyselection.itb2bhost.ru /etc/nginx/sites-enabled/
-sudo certbot --nginx -d propertyselection.itb2bhost.ru
-sudo systemctl reload nginx
-```
-
-Первая полная загрузка каталога начинается через несколько секунд после старта и занимает около 5–10 минут. Её ход виден в логах: `journalctl -u propertyselection -f`.
+Без Docker приложение тоже можно запустить: Node.js 20+, `npm ci --omit=dev`, служба из `deploy/propertyselection.service`.
 
 ## Подключение к Битрикс24
 

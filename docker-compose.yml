@@ -1,0 +1,28 @@
+name: propertyselection
+
+services:
+  app:
+    build: .
+    image: propertyselection-app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # перекрывают значения из .env — внутри контейнера всегда так
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DB_PATH: /app/data/app.sqlite
+      TRUST_PROXY: uniquelocal
+    ports:
+      # только для nginx на этом же сервере, снаружи порт недоступен
+      - "127.0.0.1:3200:3000"
+    volumes:
+      - data:/app/data
+    mem_limit: 384m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  data:

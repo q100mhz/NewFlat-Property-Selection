@@ -28,7 +28,8 @@ if (!config.devMode) {
 }
 
 const app = express();
-app.set('trust proxy', 'loopback');
+// Чьим заголовкам X-Forwarded-For доверять. В Docker прокси (nginx) приходит из внутренней сети — TRUST_PROXY=uniquelocal
+app.set('trust proxy', process.env.TRUST_PROXY || 'loopback');
 app.disable('x-powered-by');
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(express.json({ limit: '1mb' }));
