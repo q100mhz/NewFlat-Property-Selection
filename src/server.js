@@ -73,15 +73,26 @@ async function verifyAppToken(domain, token) {
   return info.result;
 }
 
+/** Сохраняет доступ к порталу и регистрирует вкладки. Вызывается при установке и при первом открытии. */
+async function installPortal(a, reason = 'install') {
+  try {
+    await verifyAppToken(a.domain, a.accessToken);
+  } catch (e) {
+    console.warn(`[install] ${a.domain}: отказ (${reason}): ${e.message}`);
+    throw e;
+  }
+  savePortal({ ...a });
+  const results = await bindPlacements(a.domain, a.accessToken);
+  console.log(`[install] ${a.domain} (${reason})`, JSON.stringify(results));
+  return results;
+}
+
 app.all('/b24/install', asyncH(async (req, res) => {
   const a = authFromRequest(req);
   if (!a.domain || !a.accessToken || !a.memberId) {
     return res.status(400).send('Откройте установку из Битрикс24.');
   }
-  await verifyAppToken(a.domain, a.accessToken);
-  savePortal({ ...a });
-  const results = await bindPlacements(a.domain, a.accessToken);
-  console.log(`[install] ${a.domain}`, JSON.stringify(results));
+  const results = await installPortal(a);
   const failed = results.filter((r) => !r.ok);
   res.type('html').send(`<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <script src="https://api.bitrix24.com/api/v1/"></script>
@@ -114,8 +125,16 @@ app.post('/b24/events', asyncH(async (req, res) => {
 async function buildAgentSession(req) {
   const a = authFromRequest(req);
   if (!a.accessToken || !a.memberId) throw Object.assign(new Error('Откройте приложение из Битрикс24.'), { status: 400 });
-  const portal = getPortal(a.memberId);
-  if (!portal) throw Object.assign(new Error('Приложение не установлено на этом портале. Переустановите его.'), { status: 403 });
+  let portal = getPortal(a.memberId);
+  if (!portal) {
+    // Битрикс24 вызывает адрес установки один раз; если тогда сервер был недоступен — устанавливаемся сейчас
+    if (!a.domain) {
+      console.warn(`[install] нет данных портала ${a.memberId}, и в запросе нет DOMAIN`);
+      throw Object.assign(new Error('Приложение не установлено на этом портале. Переустановите его.'), { status: 403 });
+    }
+    await installPortal(a, 'первое открытие');
+    portal = getPortal(a.memberId);
+  }
   // запрос идёт только на сохранённый при установке домен портала
   const me = (await callWithToken(portal.domain, 'user.current', {}, a.accessToken)).result;
   return {
