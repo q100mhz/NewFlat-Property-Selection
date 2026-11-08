@@ -3,6 +3,7 @@ import path from 'node:path';
 import express from 'express';
 import { config, ROOT, CATALOG_SECTIONS, DISLIKE_REASONS, assertProductionConfig } from './config.js';
 import { db } from './db.js';
+import { installNetwork } from './net.js';
 import { imageHandler } from './images.js';
 import { createSession, requireSession, escapeHtml } from './session.js';
 import {
@@ -26,6 +27,8 @@ if (!config.devMode) {
     console.warn('ВНИМАНИЕ: B24_ALLOWED_DOMAINS не задан — приложение примет установку с любого портала, где есть его ключ.');
   }
 }
+
+installNetwork(); // перебор адресов при подключении (см. src/net.js)
 
 const app = express();
 // Чьим заголовкам X-Forwarded-For доверять. В Docker прокси (nginx) приходит из внутренней сети — TRUST_PROXY=uniquelocal

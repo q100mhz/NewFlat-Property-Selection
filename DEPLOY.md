@@ -265,13 +265,10 @@ rm /etc/cron.d/propertyselection-backup
 
 **Нет комментариев в таймлайне или уведомлений.** Проверьте права приложения (CRM, Чат и уведомления) и строки `[timeline]` / `[notify]` в логе.
 
-**В логе `fetch failed` / `UND_ERR_CONNECT_TIMEOUT` при обращении к порталу, хотя с самого сервера `curl https://<портал>.bitrix24.ru` работает.** Контейнер получает адрес портала от другого DNS-сервера, чем система. Дайте контейнеру DNS сервера через `docker-compose.override.yml` (файл не хранится в git, `git pull` его не затрагивает):
+**В логе `fetch failed` / `UND_ERR_CONNECT_TIMEOUT` при обращении к порталу.** DNS Битрикс24 отдаёт много адресов, и часть из них может быть недоступна с сервера. Приложение перебирает адреса (по 1,5 с на каждый) и запоминает рабочий (`src/net.js`). Если ошибка всё же повторяется, проверьте доступность адресов с сервера:
 
 ```bash
-cd /opt/propertyselection
-DNS=$(awk '/^nameserver/{print $2}' /run/systemd/resolve/resolv.conf | grep -v '^127\.' | head -3)
-{ echo "services:"; echo "  app:"; echo "    dns:"; for d in $DNS; do echo "      - $d"; done; } > docker-compose.override.yml
-docker compose up -d
+for ip in $(getent ahostsv4 newflat.bitrix24.ru | awk '{print $1}' | sort -u); do printf "%-16s " $ip; curl -s -o /dev/null -w "%{http_code}\n" --max-time 5 --resolve newflat.bitrix24.ru:443:$ip https://newflat.bitrix24.ru/rest/server.time.json || echo "нет связи"; done
 ```
 
 **Каталог пустой или неполный.** Сайт newflat72.ru иногда обрывает соединения. Приложение повторяет запросы, а при неполном обходе запускает его снова через 30 минут. Смотрите строки `[crawl]` в логе.
