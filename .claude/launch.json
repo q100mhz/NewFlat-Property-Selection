@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["src/server.js"],
+      "env": { "DEV_MODE": "1", "CRAWL_MAX_PAGES": "2", "PORT": "3123", "BASE_URL": "http://localhost:3123", "DB_PATH": "data/dev.sqlite" },
+      "port": 3123
+    }
+  ]
+}

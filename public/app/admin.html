@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Подборка — настройки</title>
+  <link rel="stylesheet" href="/static/shared/base.css">
+  <link rel="stylesheet" href="/static/app/app.css">
+  <style>
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin: 12px 0; }
+    .kpi { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; }
+    .kpi b { display: block; font-size: 20px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+    th { color: var(--text-2); font-weight: 600; }
+    .table-wrap { overflow-x: auto; }
+    section.card { margin-bottom: 16px; }
+    h3 { margin: 0 0 4px; }
+  </style>
+  <!--BOOT-->
+  <script src="https://api.bitrix24.com/api/v1/"></script>
+</head>
+<body>
+  <div id="app">
+    <div class="topbar"><div class="topbar__title">Подборка объектов newflat72.ru</div></div>
+    <section class="card pad">
+      <h3>Каталог</h3>
+      <div class="muted small" id="crawl-status"></div>
+      <div class="grid" id="kpis"></div>
+      <button class="btn btn-blue btn-sm" id="recrawl">Обновить каталог сейчас</button>
+    </section>
+    <section class="card pad">
+      <h3>Как пользоваться</h3>
+      <ol class="small">
+        <li>Откройте карточку лида или сделки → вкладка <b>«Подборка»</b>.</li>
+        <li>Нажмите «Новая подборка», выберите объекты из каталога или вставьте ссылку с сайта.</li>
+        <li>Скопируйте ссылку и отправьте клиенту. Ссылка автоматически сохраняется в таймлайне.</li>
+        <li>Клиент отмечает «Нравится / Не подходит» с причинами — ответ придёт уведомлением и комментарием в карточку.</li>
+      </ol>
+    </section>
+    <section class="card pad">
+      <h3>Последние подборки</h3>
+      <div class="table-wrap"><table id="recent"></table></div>
+    </section>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script src="/static/shared/util.js"></script>
+  <script>
+  (function () {
+    const B = window.__BOOT__; const { esc, dateTime, toast } = window.U;
+    const st = B.stats;
+    document.getElementById('crawl-status').textContent = st.lastCrawlAt
+      ? 'Последнее обновление: ' + new Date(st.lastCrawlAt).toLocaleString('ru-RU') + (st.crawl.running ? ' · идёт обновление…' : '')
+      : (st.crawl.running ? 'Идёт первичная загрузка каталога…' : 'Каталог ещё не загружен');
+    document.getElementById('kpis').innerHTML = `<div class="kpi"><b>${st.total.toLocaleString('ru-RU')}</b><span class="muted small">объектов всего</span></div>` +
+      B.sections.map((s) => `<div class="kpi"><b>${(st.byCategory[s.category] || 0).toLocaleString('ru-RU')}</b><span class="muted small">${esc(s.label)}</span></div>`).join('');
+    const link = (r) => `https://${B.portalDomain}/crm/${r.entity_type}/details/${r.entity_id}/`;
+    document.getElementById('recent').innerHTML = B.recent.length
+      ? '<tr><th>Подборка</th><th>Карточка</th><th>Создал</th><th>Дата</th><th>Просмотры</th><th>Ответ</th></tr>' + B.recent.map((r) => `<tr>
+        <td>${esc(r.title || 'Подборка №' + r.id)}</td>
+        <td><a href="${link(r)}" target="_top">${r.entity_type === 'lead' ? 'Лид' : 'Сделка'} #${r.entity_id}</a></td>
+        <td>${esc(r.created_by_name || '')}</td><td>${esc(dateTime(r.created_at))}</td>
+        <td>${r.view_count}</td><td>${r.submitted_at ? '✓ ' + esc(dateTime(r.submitted_at)) : '—'}</td></tr>`).join('')
+      : '<tr><td class="muted">Подборок пока нет</td></tr>';
+    document.getElementById('recrawl').onclick = async function () {
+      this.disabled = true;
+      const r = await fetch('/api/catalog/recrawl', { method: 'POST', headers: { Authorization: 'Bearer ' + B.token } });
+      const d = await r.json().catch(() => ({}));
+      toast(r.ok ? 'Обновление запущено, это займёт несколько минут' : (d.error || 'Ошибка'));
+    };
+    if (window.BX24) BX24.init(() => BX24.fitWindow());
+  })();
+  </script>
+</body>
+</html>
