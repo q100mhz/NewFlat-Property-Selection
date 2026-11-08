@@ -265,6 +265,15 @@ rm /etc/cron.d/propertyselection-backup
 
 **Нет комментариев в таймлайне или уведомлений.** Проверьте права приложения (CRM, Чат и уведомления) и строки `[timeline]` / `[notify]` в логе.
 
+**В логе `fetch failed` / `UND_ERR_CONNECT_TIMEOUT` при обращении к порталу, хотя с самого сервера `curl https://<портал>.bitrix24.ru` работает.** Контейнер получает адрес портала от другого DNS-сервера, чем система. Дайте контейнеру DNS сервера через `docker-compose.override.yml` (файл не хранится в git, `git pull` его не затрагивает):
+
+```bash
+cd /opt/propertyselection
+DNS=$(awk '/^nameserver/{print $2}' /run/systemd/resolve/resolv.conf | grep -v '^127\.' | head -3)
+{ echo "services:"; echo "  app:"; echo "    dns:"; for d in $DNS; do echo "      - $d"; done; } > docker-compose.override.yml
+docker compose up -d
+```
+
 **Каталог пустой или неполный.** Сайт newflat72.ru иногда обрывает соединения. Приложение повторяет запросы, а при неполном обходе запускает его снова через 30 минут. Смотрите строки `[crawl]` в логе.
 
 **После изменения `.env` ничего не поменялось.** `docker compose restart` не перечитывает `.env`. Нужно выполнить `docker compose up -d`.
