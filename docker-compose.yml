@@ -6,15 +6,15 @@ services:
     image: propertyselection-app
     restart: unless-stopped
     env_file: .env
+    # Сеть сервера: у отдельной Docker-сети на этом сервере нет выхода в интернет
+    # (брандмауэр запрещает маршрутизируемый трафик), а приложению нужны newflat72.ru и Битрикс24.
+    network_mode: host
     environment:
-      # перекрывают значения из .env — внутри контейнера всегда так
-      HOST: 0.0.0.0
-      PORT: "3000"
+      # перекрывают значения из .env; порт слушается только на localhost — для nginx
+      HOST: 127.0.0.1
+      PORT: "3200"
       DB_PATH: /app/data/app.sqlite
-      TRUST_PROXY: uniquelocal
-    ports:
-      # только для nginx на этом же сервере, снаружи порт недоступен
-      - "127.0.0.1:3200:3000"
+      TRUST_PROXY: loopback
     volumes:
       - data:/app/data
     mem_limit: 384m

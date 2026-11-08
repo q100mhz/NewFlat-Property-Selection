@@ -7,7 +7,7 @@
 | Что | Где |
 |---|---|
 | Код | `/opt/propertyselection` (рядом с `/opt/publisher` и `/opt/welegalcompliance`) |
-| Контейнер | `propertyselection-app-1`, порт `127.0.0.1:3200`, не больше 384 МБ памяти |
+| Контейнер | `propertyselection-app-1` в сети сервера, слушает только `127.0.0.1:3200`, не больше 384 МБ памяти |
 | Данные (база, кэш фото) | Docker-том `propertyselection_data` |
 | Сайт nginx | `/etc/nginx/sites-available/propertyselection.itb2bhost.ru.conf` |
 | Сертификат | отдельный, только для `propertyselection.itb2bhost.ru` |
@@ -66,7 +66,7 @@ AGENCY_PHONE=<телефон агентства, например +7 (3452) 00-0
 nano .env
 ```
 
-`B24_CLIENT_ID` и `B24_CLIENT_SECRET` пока оставьте как есть — их выдаст Битрикс24 на шаге 5. Строки `PORT` и `HOST` не важны: в Docker их задаёт `docker-compose.yml`.
+`B24_CLIENT_ID` и `B24_CLIENT_SECRET` пока оставьте как есть — их выдаст Битрикс24 на шаге 5. Строки `PORT` и `HOST` не важны: их задаёт `docker-compose.yml`.
 
 Соберите образ. Он только собирается и пока не запускается; займёт 2–4 минуты:
 
@@ -143,7 +143,7 @@ docker compose ps
 docker compose logs --tail 30
 ```
 
-В `ps` у контейнера должен быть статус `Up` (через полминуты — `Up (healthy)`). В логах должна быть строка `Подборка: http://0.0.0.0:3000`.
+В `ps` у контейнера должен быть статус `Up` (через полминуты — `Up (healthy)`). В логах должна быть строка `Подборка: http://127.0.0.1:3200`.
 
 > Если контейнер перезапускается и в логе написано «Не заданы обязательные параметры в .env», проверьте `SESSION_SECRET` (не короче 32 символов), `B24_CLIENT_ID` и `B24_CLIENT_SECRET`, затем выполните `docker compose up -d` ещё раз.
 
@@ -270,6 +270,8 @@ rm /etc/cron.d/propertyselection-backup
 ```bash
 for ip in $(getent ahostsv4 newflat.bitrix24.ru | awk '{print $1}' | sort -u); do printf "%-16s " $ip; curl -s -o /dev/null -w "%{http_code}\n" --max-time 5 --resolve newflat.bitrix24.ru:443:$ip https://newflat.bitrix24.ru/rest/server.time.json || echo "нет связи"; done
 ```
+
+**Почему контейнер работает в сети сервера (`network_mode: host`).** На этом сервере брандмауэр запрещает маршрутизируемый трафик (`ufw: deny (routed)`), и у отдельной Docker-сети приложения не было выхода в интернет: ни к newflat72.ru, ни к Битрикс24. Брандмауэр — общая настройка сервера, поэтому приложение использует сеть сервера и слушает только `127.0.0.1:3200`.
 
 **Каталог пустой или неполный.** Сайт newflat72.ru иногда обрывает соединения. Приложение повторяет запросы, а при неполном обходе запускает его снова через 30 минут. Смотрите строки `[crawl]` в логе.
 
