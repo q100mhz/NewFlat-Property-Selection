@@ -24,7 +24,7 @@
 
 ## Развёртывание на VPS
 
-Нужны Node.js 20+ (рекомендуется 22 LTS), nginx и certbot.
+Нужны Node.js 20+ (рекомендуется 22 LTS), nginx и certbot. Подробная пошаговая инструкция для сервера 89.111.170.193 — в [DEPLOY.md](DEPLOY.md).
 
 ```bash
 sudo useradd -r -m -d /opt/propertyselection propsel

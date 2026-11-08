@@ -51,6 +51,20 @@ async function download(u, file) {
   throw lastErr;
 }
 
+/** Удаляет из кэша фото, которые не обновлялись дольше 30 дней (кэш не растёт бесконечно). */
+function cleanupCache() {
+  const limit = Date.now() - 30 * 24 * 3600e3;
+  let removed = 0;
+  for (const name of fs.readdirSync(CACHE_DIR)) {
+    const file = path.join(CACHE_DIR, name);
+    try {
+      if (fs.statSync(file).mtimeMs < limit) { fs.unlinkSync(file); removed++; }
+    } catch { /* файл уже удалён */ }
+  }
+  if (removed) console.log(`[img-cache] удалено устаревших файлов: ${removed}`);
+}
+setInterval(cleanupCache, 24 * 3600e3).unref();
+
 /** Подменяет ссылки на фото в объекте. */
 export function proxyObject(o) {
   if (!o) return o;
