@@ -88,3 +88,45 @@ test('публичная подборка: реакции сохраняются
   assert.equal(m.sel.getSelectionForAgent({ memberId: 'm1', entityType: 'lead', entityId: 6 }, info.lastInsertRowid), null);
   assert.ok(m.sel.getSelectionForAgent({ memberId: 'm1', entityType: 'deal', entityId: 9, leadId: 5 }, info.lastInsertRowid));
 });
+
+test('автосводка: одна запись в таймлайн после изменений, повтор только после новых изменений', async () => {
+  const { db } = m;
+  m.bitrix.savePortal({ memberId: 'm2', domain: 'agency.bitrix24.ru', accessToken: 'a', refreshToken: 'r', expiresIn: 3600 });
+  db.prepare(`INSERT OR REPLACE INTO objects (id, url, title, price, active) VALUES (202, 'https://newflat72.ru/predlozhenija/b/', 'Объект Б', 2000000, 1)`).run();
+  const info = db.prepare(`INSERT INTO selections (token, member_id, entity_type, entity_id, created_by_id) VALUES ('DigestTokenDigestTok', 'm2', 'deal', 8, 3)`).run();
+  const item = db.prepare(`INSERT INTO selection_items (selection_id, object_id, snapshot_json) VALUES (?, 202, ?)`)
+    .run(info.lastInsertRowid, JSON.stringify({ id: 202, url: 'https://newflat72.ru/predlozhenija/b/', title: 'Объект Б', price: 2000000 }));
+
+  const calls = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opts) => {
+    calls.push({ url: String(url), body: opts?.body ? JSON.parse(opts.body) : null });
+    return new Response(JSON.stringify({ result: String(url).includes('crm.deal.get') ? { ASSIGNED_BY_ID: 3 } : true }));
+  };
+  const events = [];
+  const { bus } = await import('../src/events.js');
+  const onEv = (e) => events.push(e.kind);
+  bus.on('selection', onEv);
+  try {
+    await m.sel.processPendingDigests(0); // сводки, оставшиеся от предыдущих тестов
+    calls.length = 0; events.length = 0;
+    assert.equal(await m.sel.processPendingDigests(0), 0, 'без изменений клиента сводки нет');
+    m.sel.saveReaction('DigestTokenDigestTok', item.lastInsertRowid, { reaction: 'like', comment: 'Нравится' });
+    assert.deepEqual(events, ['reaction']);
+    assert.equal(await m.sel.processPendingDigests(60), 0, 'клиент ещё активен — ждём');
+    assert.equal(await m.sel.processPendingDigests(0), 1);
+    const timeline = calls.filter((c) => c.url.includes('crm.timeline.comment.add'));
+    assert.equal(timeline.length, 1);
+    assert.equal(timeline[0].body.fields.ENTITY_TYPE, 'deal');
+    assert.equal(timeline[0].body.fields.AUTHOR_ID, 3);
+    assert.match(timeline[0].body.fields.COMMENT, /👍 Нравится \(1\)/);
+    assert.equal(await m.sel.processPendingDigests(0), 0, 'повторно без новых изменений не отправляется');
+    m.sel.saveReaction('DigestTokenDigestTok', item.lastInsertRowid, { reaction: 'dislike', reasons: ['Цена'] });
+    assert.equal(await m.sel.processPendingDigests(0), 1);
+    const second = calls.filter((c) => c.url.includes('crm.timeline.comment.add'))[1];
+    assert.match(second.body.fields.COMMENT, /\(обновлено\)/);
+  } finally {
+    global.fetch = realFetch;
+    bus.off('selection', onEv);
+  }
+});

@@ -6,8 +6,7 @@
   let data = null;
   const open = new Set();      // раскрытые «Подробнее»
   const saving = new Map();    // itemId -> 'saving' | 'saved'
-  let submitting = false;
-  let justSubmitted = false;
+  const dirty = new Set();      // комментарии, которые ещё не сохранены
 
   async function call(path, body) {
     const res = await fetch(`/api/public/${encodeURIComponent(token)}${path}`, {
@@ -58,11 +57,8 @@
               ${data.message ? `<div class="c-agent__msg">${esc(data.message)}</div>` : ''}
             </div>
           </div>` : ''}
-          <p class="c-hint">Отметьте, что вам нравится, а что нет — так мы быстрее найдём подходящий вариант. Если объект не подходит, укажите причину.</p>
+          <p class="c-hint">Отметьте, что вам нравится, а что нет — так мы быстрее найдём подходящий вариант. Если объект не подходит, укажите причину. Ответы сохраняются сами, специалист видит их сразу.</p>
         </section>
-        ${justSubmitted || data.submittedAt ? `<div class="c-done ${justSubmitted ? 'is-fresh' : ''}">
-          <b>Спасибо, ответ отправлен!</b> Специалист уже получил ваши оценки. Вы можете изменить их и отправить ещё раз.
-        </div>` : ''}
         <div class="c-list">${data.items.map(renderItem).join('')}</div>
       </main>
       <div class="c-bar">
@@ -71,7 +67,7 @@
             <div class="c-bar__label">Оценено <b>${r}</b> из ${total}</div>
             <div class="c-progress"><span style="width:${total ? (r / total) * 100 : 0}%"></span></div>
           </div>
-          <button class="btn btn-primary c-bar__btn" data-act="submit" ${!r || submitting ? 'disabled' : ''}>${submitting ? 'Отправляем…' : data.submittedAt ? 'Отправить снова' : 'Отправить ответ'}</button>
+          <div class="c-bar__status">${r ? (r === total ? '✓ Все оценки у специалиста' : '✓ Оценки сохранены') : 'Ответы сохраняются автоматически'}</div>
         </div>
       </div>
       <footer class="c-footer">${esc(a.name)} · <a href="${esc(a.site)}" target="_blank" rel="noopener">${esc(a.site.replace(/^https?:\/\//, ''))}</a></footer>`;
@@ -134,12 +130,16 @@
   }
 
   // ---------- Сохранение реакции ----------
+  const payload = (it) => ({ reaction: it.reaction, reasons: it.reasons, comment: it.clientComment, wantViewing: it.wantViewing });
+
   async function persist(it) {
+    dirty.delete(it.itemId);
     saving.set(it.itemId, 'saving');
     updateSaved(it.itemId);
     try {
-      await call(`/items/${it.itemId}`, { reaction: it.reaction, reasons: it.reasons, comment: it.clientComment, wantViewing: it.wantViewing });
+      await call(`/items/${it.itemId}`, payload(it));
       saving.set(it.itemId, 'saved');
+      updateBar();
     } catch (e) {
       saving.delete(it.itemId);
       toast(e.message);
@@ -151,6 +151,30 @@
     if (!persistLater.has(it.itemId)) persistLater.set(it.itemId, debounce(() => persist(it), 600));
     persistLater.get(it.itemId)();
   }
+  /** Обновляет нижнюю панель без полной перерисовки (чтобы не сбивать ввод). */
+  function updateBar() {
+    const r = rated(); const total = data.items.length;
+    const label = document.querySelector('.c-bar__label');
+    if (label) label.innerHTML = `Оценено <b>${r}</b> из ${total}`;
+    const bar = document.querySelector('.c-progress span');
+    if (bar) bar.style.width = (total ? (r / total) * 100 : 0) + '%';
+    const st = document.querySelector('.c-bar__status');
+    if (st) st.textContent = r ? (r === total ? '✓ Все оценки у специалиста' : '✓ Оценки сохранены') : 'Ответы сохраняются автоматически';
+  }
+
+  /** При уходе со страницы досылаем несохранённые комментарии. */
+  function flushDirty() {
+    for (const id of dirty) {
+      const it = itemById(id);
+      if (!it) continue;
+      const body = new Blob([JSON.stringify(payload(it))], { type: 'application/json' });
+      if (!navigator.sendBeacon?.(`/api/public/${encodeURIComponent(token)}/items/${id}`, body)) persist(it);
+    }
+    dirty.clear();
+  }
+  window.addEventListener('pagehide', flushDirty);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushDirty(); });
+
   function updateSaved(id) {
     const el = document.querySelector(`#item-${id} .c-saved`);
     const s = saving.get(id);
@@ -206,7 +230,6 @@
         track.scrollBy({ left: (el.dataset.act === 'next' ? 1 : -1) * track.clientWidth, behavior: 'smooth' });
         break;
       }
-      case 'submit': submit(); break;
       default:
     }
   });
@@ -216,32 +239,14 @@
     if (!id) return;
     const it = itemById(id);
     it.clientComment = e.target.value;
+    dirty.add(it.itemId);
     persistDebounced(it);
   });
 
-  async function submit() {
-    if (submitting) return;
-    const unrated = data.items.length - rated();
-    if (unrated && !confirm(`Вы не оценили ${unrated} ${plural(unrated, 'объект', 'объекта', 'объектов')}. Отправить ответ всё равно?`)) return;
-    submitting = true;
-    render();
-    try {
-      // дожидаемся отложенного сохранения комментариев
-      await Promise.all(data.items.filter((i) => i.reaction).map((i) => call(`/items/${i.itemId}`, {
-        reaction: i.reaction, reasons: i.reasons, comment: i.clientComment, wantViewing: i.wantViewing,
-      })));
-      await call('/submit', {});
-      data.submittedAt = new Date().toISOString();
-      justSubmitted = true;
-      submitting = false;
-      render();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    } catch (err) {
-      submitting = false;
-      render();
-      toast(err.message);
-    }
-  }
+  root.addEventListener('focusout', (e) => {
+    const id = Number(e.target.dataset?.comment);
+    if (id && dirty.has(id)) persist(itemById(id));
+  });
 
   // ---------- Галерея ----------
   function bindCarousels() {

@@ -18,6 +18,7 @@
     title: '', message: '',
     created: null,
     detail: null,             // объект в модальном окне
+    flash: new Set(),         // подборки, обновлённые клиентом только что
   };
 
   // ---------- API ----------
@@ -57,12 +58,58 @@
     state.sentObjects = data.sentObjects;
   }
 
+  // ---------- Живые обновления ----------
+  // Сервер присылает событие, когда клиент открыл подборку или изменил оценку/комментарий.
+  let pendingIds = new Set();
+  const refreshFromStream = debounce(async () => {
+    const ids = [...pendingIds]; pendingIds = new Set();
+    try {
+      await loadHistory();
+      ids.forEach((id) => state.flash.add(id));
+      if (state.view === 'history' && !state.detail) renderKeepFocus();
+      setTimeout(() => {
+        ids.forEach((id) => state.flash.delete(id));
+        document.querySelectorAll('.sel.is-flash').forEach((el) => el.classList.remove('is-flash'));
+      }, 2500);
+    } catch (e) { /* следующая попытка при следующем событии */ }
+  }, 400);
+
+  async function startStream(attempt = 0) {
+    try {
+      const res = await fetch('/api/selections/stream', { headers: { Authorization: 'Bearer ' + BOOT.token } });
+      if (res.status === 401) return; // сессия истекла — вкладку нужно открыть заново
+      if (!res.ok || !res.body) throw new Error('stream ' + res.status);
+      attempt = 0;
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+          const data = chunk.split('\n').find((l) => l.startsWith('data: '));
+          if (!chunk.includes('event: change') || !data) continue;
+          try { pendingIds.add(JSON.parse(data.slice(6)).selectionId); } catch (e) { /* ignore */ }
+          refreshFromStream();
+        }
+      }
+    } catch (e) { /* переподключимся */ }
+    setTimeout(() => startStream(attempt + 1), Math.min(30000, 2000 * 2 ** attempt));
+  }
+
+  // статус «оценивает сейчас» устаревает сам — обновляем историю раз в минуту
+  setInterval(() => { if (state.view === 'history' && !state.detail && !state.created) renderKeepFocus(); }, 60e3);
+
   async function init() {
     try {
       const [meta] = await Promise.all([api('/catalog/meta'), loadHistory()]);
       state.meta = meta;
       if (!state.selections.length) state.view = 'history';
       render();
+      startStream();
     } catch (e) {
       $app.innerHTML = `<div class="empty"><h3>Не удалось загрузить</h3><p class="muted">${esc(e.message)}</p></div>`;
     }
@@ -103,9 +150,13 @@
 
   function statusBadges(s) {
     const b = [];
-    if (s.submittedAt) b.push(`<span class="badge badge-like">✓ Ответ получен ${esc(dateTime(s.submittedAt))}</span>`);
-    else if (s.viewCount) b.push(`<span class="badge badge-info">Просмотрена${s.viewCount > 1 ? ` ${s.viewCount} ${plural(s.viewCount, 'раз', 'раза', 'раз')}` : ''}</span>`);
+    const rated = s.stats.liked + s.stats.disliked;
+    const activeAgo = s.lastActivityAt ? Date.now() - Date.parse(s.lastActivityAt.replace(' ', 'T') + 'Z') : Infinity;
+    if (activeAgo < 3 * 60e3) b.push('<span class="badge badge-live"><i></i>Клиент оценивает сейчас</span>');
+    if (rated) b.push(`<span class="badge badge-like">Оценено ${rated} из ${s.stats.total}${s.lastActivityAt ? ' · ' + esc(dateTime(s.lastActivityAt)) : ''}</span>`);
+    else if (s.viewCount) b.push(`<span class="badge badge-info">Просмотрена${s.viewCount > 1 ? ` ${s.viewCount} ${plural(s.viewCount, 'раз', 'раза', 'раз')}` : ''}, без оценок</span>`);
     else b.push('<span class="badge">Не открыта</span>');
+    if (s.submittedAt && !s.digestPending) b.push(`<span class="badge" title="Сводка с оценками добавлена в таймлайн карточки">Сводка в таймлайне ${esc(dateTime(s.submittedAt))}</span>`);
     if (s.archived) b.push('<span class="badge">В архиве</span>');
     if (s.entityType !== BOOT.entityType) b.push('<span class="badge badge-warn">Из лида</span>');
     return b.join(' ');
@@ -121,7 +172,7 @@
     const open = state.expanded.has(s.id);
     const st = s.stats;
     const unrated = st.total - st.liked - st.disliked;
-    return `<div class="card sel ${s.archived ? 'is-archived' : ''}">
+    return `<div class="card sel ${s.archived ? 'is-archived' : ''} ${state.flash.has(s.id) ? 'is-flash' : ''}">
       <div class="sel__head" data-act="expand" data-id="${s.id}">
         <div class="sel__main">
           <div class="sel__title">${esc(s.title || 'Подборка №' + s.id)}</div>

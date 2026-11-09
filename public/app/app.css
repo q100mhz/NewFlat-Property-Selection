@@ -119,3 +119,10 @@ body { padding: 0 0 24px; background: var(--bg); min-height: 400px; }
   .props { grid-template-columns: 1fr; }
   .props dd { margin-bottom: 6px; }
 }
+
+/* Живые обновления */
+.sel.is-flash { animation: sel-flash 2.4s ease-out; }
+@keyframes sel-flash { 0%, 30% { box-shadow: 0 0 0 2px var(--accent-2), var(--shadow); } 100% { box-shadow: var(--shadow); } }
+.badge-live { background: var(--accent-soft); color: var(--accent); }
+.badge-live i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); display: inline-block; animation: live-pulse 1.4s ease-in-out infinite; }
+@keyframes live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }

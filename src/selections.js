@@ -4,6 +4,7 @@ import { newPublicToken } from './session.js';
 import { getObjectDetail, getObjectRow } from './catalog/catalog.js';
 import { callAsApp, getPortal } from './bitrix.js';
 import { proxyObject } from './images.js';
+import { emitSelectionChange } from './events.js';
 
 const MAX_ITEMS = 50;
 
@@ -81,6 +82,7 @@ function selectionView(s, items, opts) {
     title: s.title, message: s.message, createdById: s.created_by_id, createdByName: s.created_by_name,
     createdAt: s.created_at, firstViewedAt: s.first_viewed_at, lastViewedAt: s.last_viewed_at, viewCount: s.view_count,
     submittedAt: s.submitted_at, submitCount: s.submit_count, archived: !!s.archived,
+    lastActivityAt: s.last_activity_at, digestPending: !!s.digest_pending,
     stats: {
       total: its.length,
       liked: its.filter((i) => i.reaction === 'like').length,
@@ -94,7 +96,7 @@ function selectionView(s, items, opts) {
 const itemsOf = (selectionId) => db.prepare('SELECT * FROM selection_items WHERE selection_id = ? ORDER BY position, id').all(selectionId);
 
 /** Доступные сессии сущности: сама сущность и, для сделки, лид-источник. */
-function allowedEntities(session) {
+export function allowedEntities(session) {
   const list = [{ type: session.entityType, id: session.entityId }];
   if (session.entityType === 'deal' && session.leadId) list.push({ type: 'lead', id: session.leadId });
   return list;
@@ -167,6 +169,7 @@ export function registerView(token) {
   const first = !s.first_viewed_at;
   db.prepare(`UPDATE selections SET view_count = view_count + 1, last_viewed_at = datetime('now'),
     first_viewed_at = COALESCE(first_viewed_at, datetime('now')) WHERE id = ?`).run(s.id);
+  emitSelectionChange(s, 'view');
   if (first) {
     notifyAgents(s, `Клиент открыл подборку «${selectionName(s)}» (${entityLink(s)}).`).catch((e) => console.warn('[notify]', e.message));
   }
@@ -181,22 +184,29 @@ export function saveReaction(token, itemId, { reaction, reasons, comment, wantVi
   const rs = Array.isArray(reasons) ? reasons.filter((x) => DISLIKE_REASONS.includes(x)).slice(0, DISLIKE_REASONS.length) : [];
   db.prepare(`UPDATE selection_items SET reaction = ?, reasons_json = ?, client_comment = ?, want_viewing = ?, reacted_at = datetime('now') WHERE id = ?`)
     .run(r, r === 'dislike' ? JSON.stringify(rs) : null, String(comment || '').slice(0, 2000) || null, r === 'like' && wantViewing ? 1 : 0, item.id);
+  // отметка активности: сводка в таймлайн уйдёт, когда клиент перестанет вносить изменения
+  db.prepare(`UPDATE selections SET last_activity_at = datetime('now'), digest_pending = 1 WHERE id = ?`).run(s.id);
+  emitSelectionChange(s, 'reaction');
   return true;
 }
 
-/** Клиент отправил ответ — пишем итог в таймлайн карточки и уведомляем сотрудников. */
-export async function submitFeedback(token) {
-  const s = getByToken(token);
-  if (!s || s.archived) return null;
-  db.prepare(`UPDATE selections SET submitted_at = datetime('now'), submit_count = submit_count + 1 WHERE id = ?`).run(s.id);
+/**
+ * Сводка в таймлайн и уведомление сотрудникам. Отправляется автоматически,
+ * когда клиент не вносил изменений digestDelayMin минут; при новых изменениях — повторно.
+ */
+async function sendDigest(s) {
+  // снимаем флаг до отправки, чтобы при параллельном запуске не отправить дважды
+  const claimed = db.prepare(`UPDATE selections SET digest_pending = 0, submitted_at = datetime('now'), submit_count = submit_count + 1
+    WHERE id = ? AND digest_pending = 1`).run(s.id);
+  if (!claimed.changes) return false;
   const items = itemsOf(s.id).map((r) => itemView(r, { full: true }));
-  const comment = buildFeedbackComment(s, items);
+  if (!items.some((i) => i.reaction || i.clientComment)) return false;
   try {
     await callAsApp(s.member_id, 'crm.timeline.comment.add', {
       fields: {
         ENTITY_ID: s.entity_id,
         ENTITY_TYPE: s.entity_type,
-        COMMENT: comment,
+        COMMENT: buildFeedbackComment(s, items),
         ...(s.created_by_id ? { AUTHOR_ID: s.created_by_id } : {}),
       },
     });
@@ -206,9 +216,28 @@ export async function submitFeedback(token) {
   const liked = items.filter((i) => i.reaction === 'like').length;
   const disliked = items.filter((i) => i.reaction === 'dislike').length;
   const viewing = items.filter((i) => i.wantViewing).length;
-  notifyAgents(s, `Клиент ответил по подборке «${selectionName(s)}» (${entityLink(s)}): 👍 ${liked}, 👎 ${disliked}${viewing ? `, на просмотр: ${viewing}` : ''}.`)
+  const rated = items.filter((i) => i.reaction).length;
+  const verb = s.submit_count > 0 ? 'Клиент изменил оценки' : 'Клиент оценил подборку';
+  notifyAgents(s, `${verb} «${selectionName(s)}» (${entityLink(s)}): оценено ${rated} из ${items.length}, 👍 ${liked}, 👎 ${disliked}${viewing ? `, на просмотр: ${viewing}` : ''}.`)
     .catch((e) => console.warn('[notify]', e.message));
+  emitSelectionChange(s, 'digest');
   return true;
+}
+
+/** Отправляет сводки по подборкам, где клиент затих. */
+export async function processPendingDigests(delayMin = config.digestDelayMin) {
+  const due = db.prepare(`SELECT * FROM selections WHERE digest_pending = 1 AND archived = 0
+    AND last_activity_at <= datetime('now', ?)`).all(`-${Math.max(0, Number(delayMin) || 0) * 60} seconds`);
+  let sent = 0;
+  for (const s of due) {
+    try { if (await sendDigest(s)) sent++; } catch (e) { console.warn('[digest]', e.message); }
+  }
+  return sent;
+}
+
+export function scheduleDigests() {
+  const t = setInterval(() => { processPendingDigests().catch((e) => console.warn('[digest]', e.message)); }, 30e3);
+  t.unref?.();
 }
 
 function selectionName(s) {

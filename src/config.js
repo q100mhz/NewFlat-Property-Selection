@@ -35,6 +35,8 @@ export const config = {
   crawlMaxPages: Number(env.CRAWL_MAX_PAGES || 0), // 0 = без ограничения (для отладки можно поставить 2)
   crawlOnStart: env.CRAWL_ON_START !== '0',
   detailTtlHours: Number(env.DETAIL_TTL_HOURS || 12),
+  // Через сколько минут тишины после последней оценки клиента писать сводку в таймлайн
+  digestDelayMin: Number(env.DIGEST_DELAY_MIN || 5),
 
   // Брендинг клиентской страницы
   agencyName: env.AGENCY_NAME || 'Центр Недвижимости',

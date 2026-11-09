@@ -5,6 +5,7 @@ import { config, ROOT, CATALOG_SECTIONS, DISLIKE_REASONS, assertProductionConfig
 import { db } from './db.js';
 import { installNetwork } from './net.js';
 import { imageHandler } from './images.js';
+import { bus } from './events.js';
 import { createSession, requireSession, escapeHtml } from './session.js';
 import {
   validDomain, callWithToken, savePortal, getPortal, deletePortal, bindPlacements, scheduleTokenRefresh,
@@ -14,7 +15,7 @@ import {
 } from './catalog/catalog.js';
 import {
   createSelection, listSelectionsForAgent, getSelectionForAgent, setArchived,
-  getPublicSelection, registerView, saveReaction, submitFeedback,
+  getPublicSelection, registerView, saveReaction, allowedEntities, scheduleDigests,
 } from './selections.js';
 
 if (!config.devMode) {
@@ -230,6 +231,26 @@ api.post('/catalog/recrawl', (req, res) => {
   res.json({ started: true });
 });
 
+// Живые изменения подборок карточки (Server-Sent Events). Объявлен до /selections/:id.
+api.get('/selections/stream', requireEntity, (req, res) => {
+  const ents = allowedEntities(req.session);
+  res.set({
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Accel-Buffering': 'no', // nginx не буферизует поток
+  });
+  res.flushHeaders();
+  res.write('retry: 5000\n\n');
+  const onChange = (e) => {
+    if (e.memberId !== req.session.memberId) return;
+    if (!ents.some((x) => x.type === e.entityType && x.id === e.entityId)) return;
+    res.write(`event: change\ndata: ${JSON.stringify({ selectionId: e.selectionId, kind: e.kind })}\n\n`);
+  };
+  bus.on('selection', onChange);
+  const ping = setInterval(() => res.write(': ping\n\n'), 25e3);
+  req.on('close', () => { clearInterval(ping); bus.off('selection', onChange); });
+});
+
 api.get('/selections', requireEntity, (req, res) => res.json(listSelectionsForAgent(req.session)));
 api.post('/selections', requireEntity, asyncH(async (req, res) => {
   const sel = await createSelection(req.session, req.body || {});
@@ -278,11 +299,7 @@ pub.post('/:token/items/:itemId', (req, res) => {
   if (!ok) return res.status(404).json({ error: 'Не найдено' });
   res.json({ ok: true });
 });
-pub.post('/:token/submit', rateLimit(10, 60e3), asyncH(async (req, res) => {
-  const ok = await submitFeedback(req.params.token);
-  if (!ok) return res.status(404).json({ error: 'Не найдено' });
-  res.json({ ok: true });
-}));
+
 app.use('/api/public', pub);
 app.use('/api', api); // после публичного роутера: требует сессию сотрудника
 
@@ -329,4 +346,5 @@ app.listen(config.port, config.host, () => {
   console.log(`Подборка: http://${config.host}:${config.port} (публичный адрес ${config.baseUrl})`);
   scheduleCrawls();
   scheduleTokenRefresh();
+  scheduleDigests();
 });

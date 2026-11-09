@@ -56,7 +56,7 @@
       B.sections.map((s) => `<div class="kpi"><b>${(st.byCategory[s.category] || 0).toLocaleString('ru-RU')}</b><span class="muted small">${esc(s.label)}</span></div>`).join('');
     const link = (r) => `https://${B.portalDomain}/crm/${r.entity_type}/details/${r.entity_id}/`;
     document.getElementById('recent').innerHTML = B.recent.length
-      ? '<tr><th>Подборка</th><th>Карточка</th><th>Создал</th><th>Дата</th><th>Просмотры</th><th>Ответ</th></tr>' + B.recent.map((r) => `<tr>
+      ? '<tr><th>Подборка</th><th>Карточка</th><th>Создал</th><th>Дата</th><th>Просмотры</th><th>Сводка в таймлайне</th></tr>' + B.recent.map((r) => `<tr>
         <td>${esc(r.title || 'Подборка №' + r.id)}</td>
         <td><a href="${link(r)}" target="_top">${r.entity_type === 'lead' ? 'Лид' : 'Сделка'} #${r.entity_id}</a></td>
         <td>${esc(r.created_by_name || '')}</td><td>${esc(dateTime(r.created_at))}</td>

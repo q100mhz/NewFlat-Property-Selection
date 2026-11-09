@@ -91,6 +91,11 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 `);
 
+// Миграции: колонки, добавленные после первой версии
+const selCols = db.prepare('PRAGMA table_info(selections)').all().map((c) => c.name);
+if (!selCols.includes('last_activity_at')) db.exec('ALTER TABLE selections ADD COLUMN last_activity_at TEXT');
+if (!selCols.includes('digest_pending')) db.exec('ALTER TABLE selections ADD COLUMN digest_pending INTEGER NOT NULL DEFAULT 0');
+
 export function getMeta(key) {
   return db.prepare('SELECT value FROM meta WHERE key = ?').get(key)?.value ?? null;
 }
