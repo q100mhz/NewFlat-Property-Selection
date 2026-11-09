@@ -130,3 +130,73 @@ test('автосводка: одна запись в таймлайн после
     bus.off('selection', onEv);
   }
 });
+
+test('название по умолчанию: «Подборка на» по тюменскому времени', () => {
+  assert.equal(m.sel.defaultTitle(new Date('2026-11-09T09:05:00Z')), 'Подборка на 09.11.2026 14:05');
+  assert.equal(m.sel.defaultTitle(new Date('2026-11-09T19:30:00Z')), 'Подборка на 10.11.2026 00:30');
+});
+
+test('права: руководитель видит своё подразделение и вложенные, сотрудник — только себя', async () => {
+  const { computeScope } = await import('../src/access.js');
+  const org = {
+    departments: [
+      { id: 1, name: 'Компания', parent: null, head: 100 },
+      { id: 2, name: 'Отдел продаж', parent: 1, head: 10 },
+      { id: 3, name: 'Группа А', parent: 2, head: 20 },
+      { id: 4, name: 'Группа Б', parent: 2, head: 30 },
+      { id: 5, name: 'Бухгалтерия', parent: 1, head: 40 },
+    ],
+    users: [
+      { id: 10, departments: [2] }, { id: 20, departments: [3] }, { id: 21, departments: [3] },
+      { id: 30, departments: [4] }, { id: 31, departments: [4] }, { id: 41, departments: [5] },
+    ],
+  };
+  assert.equal(computeScope(org, 100).all, true, 'руководитель компании видит всё');
+  assert.deepEqual(computeScope(org, 10).userIds.sort((a, b) => a - b), [10, 20, 21, 30, 31]);
+  assert.deepEqual(computeScope(org, 20).userIds.sort((a, b) => a - b), [20, 21]);
+  assert.deepEqual(computeScope(org, 21), { all: false, role: 'employee', userIds: [21], departments: [] });
+});
+
+test('дашборд: периоды по Тюмени и фильтрация по правам', async () => {
+  const { periodRange, queryDashboard } = await import('../src/dashboard.js');
+  const now = new Date('2026-11-09T21:00:00Z'); // 10.11 02:00 по Тюмени
+  assert.deepEqual(periodRange({ period: 'today' }, now), { from: '2026-11-09 19:00:00', to: '2026-11-10 19:00:00' });
+  assert.deepEqual(periodRange({ period: 'week' }, now), { from: '2026-11-03 19:00:00', to: '2026-11-10 19:00:00' });
+  assert.deepEqual(periodRange({ period: 'custom', from: '2026-11-01', to: '2026-11-02' }, now), { from: '2026-10-31 19:00:00', to: '2026-11-02 19:00:00' });
+
+  const { db } = m;
+  const ins = db.prepare(`INSERT INTO selections (token, member_id, entity_type, entity_id, created_by_id, created_by_name, created_at) VALUES (?, 'dash', 'lead', ?, ?, ?, ?)`);
+  ins.run('dashTokenAAAAAAAAAAAA', 1, 20, 'Анна', '2026-11-09 20:00:00');
+  ins.run('dashTokenBBBBBBBBBBBB', 2, 21, 'Борис', '2026-11-09 20:30:00');
+  ins.run('dashTokenCCCCCCCCCCCC', 3, 30, 'Вера', '2026-11-01 10:00:00');
+  assert.equal(queryDashboard('dash', { all: true }, { period: 'all' }).total, 3);
+  assert.equal(queryDashboard('dash', { userIds: [20, 21] }, { period: 'all' }).total, 2);
+  assert.equal(queryDashboard('dash', { userIds: [21] }, { period: 'all' }).total, 1);
+  const byUser = queryDashboard('dash', { all: true }, { period: 'all', userId: '30' });
+  assert.equal(byUser.items[0].createdByName, 'Вера');
+});
+
+test('первое открытие подборки клиентом: уведомление автору и ответственному', async () => {
+  const { db } = m;
+  m.bitrix.savePortal({ memberId: 'm3', domain: 'agency.bitrix24.ru', accessToken: 'a', refreshToken: 'r', expiresIn: 3600 });
+  db.prepare(`INSERT INTO selections (token, member_id, entity_type, entity_id, created_by_id) VALUES ('ViewTokenViewTokenVi', 'm3', 'lead', 77, 5)`).run();
+  const calls = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opts) => {
+    calls.push({ url: String(url), body: opts?.body ? JSON.parse(opts.body) : null });
+    return new Response(JSON.stringify({ result: String(url).includes('crm.lead.get') ? { ASSIGNED_BY_ID: 9 } : true }));
+  };
+  try {
+    m.sel.registerView('ViewTokenViewTokenVi');
+    await new Promise((r) => setTimeout(r, 50));
+    const notified = calls.filter((c) => c.url.includes('im.notify.system.add')).map((c) => c.body.USER_ID).sort();
+    assert.deepEqual(notified, [5, 9]);
+    assert.match(calls.find((c) => c.url.includes('im.notify')).body.MESSAGE, /Клиент открыл подборку/);
+    calls.length = 0;
+    m.sel.registerView('ViewTokenViewTokenVi');
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(calls.filter((c) => c.url.includes('im.notify')).length, 0, 'повторное открытие — без уведомления');
+  } finally {
+    global.fetch = realFetch;
+  }
+});

@@ -10,6 +10,13 @@ const MAX_ITEMS = 50;
 
 export const publicLink = (token) => `${config.baseUrl}/s/${token}`;
 
+/** «Подборка на 09.11.2026 14:05» по времени агентства (Тюмень). */
+export function defaultTitle(date = new Date(), timeZone = config.timezone) {
+  const f = new Intl.DateTimeFormat('ru-RU', { timeZone, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+  const p = Object.fromEntries(f.formatToParts(date).map((x) => [x.type, x.value]));
+  return `Подборка на ${p.day}.${p.month}.${p.year} ${p.hour}:${p.minute}`;
+}
+
 function snapshotOf(o) {
   return {
     id: o.id, url: o.url, title: o.title, address: o.address, lat: o.lat, lng: o.lng, price: o.price,
@@ -45,7 +52,7 @@ export async function createSelection(session, { title, message, items }) {
       INSERT INTO selections (token, member_id, entity_type, entity_id, title, message, created_by_id, created_by_name)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(token, session.memberId, session.entityType, session.entityId,
-      String(title || '').slice(0, 200) || null, String(message || '').slice(0, 3000) || null,
+      String(title || '').trim().slice(0, 200) || defaultTitle(), String(message || '').slice(0, 3000) || null,
       session.userId || null, session.userName || null);
     const ins = db.prepare('INSERT INTO selection_items (selection_id, object_id, position, snapshot_json, agent_note) VALUES (?, ?, ?, ?, ?)');
     objects.forEach((o, i) => ins.run(info.lastInsertRowid, o.snapshot.id, i, JSON.stringify(o.snapshot), o.note || null));

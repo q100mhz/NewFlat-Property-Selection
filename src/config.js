@@ -37,6 +37,8 @@ export const config = {
   detailTtlHours: Number(env.DETAIL_TTL_HOURS || 12),
   // Через сколько минут тишины после последней оценки клиента писать сводку в таймлайн
   digestDelayMin: Number(env.DIGEST_DELAY_MIN || 5),
+  // Часовой пояс агентства: названия подборок, «сегодня/неделя» в дашборде
+  timezone: env.APP_TIMEZONE || 'Asia/Yekaterinburg',
 
   // Брендинг клиентской страницы
   agencyName: env.AGENCY_NAME || 'Центр Недвижимости',

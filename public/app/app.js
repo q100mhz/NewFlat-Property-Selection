@@ -258,7 +258,7 @@
       <div class="builder__chosen">
         <div class="card pad sticky">
           <div class="chosen__title">В подборке: ${state.chosen.length}</div>
-          <input class="input" name="title" placeholder="Название (необязательно)" value="${esc(state.title)}" data-field="title">
+          <input class="input" name="title" placeholder="Название подборки" value="${esc(state.title)}" data-field="title">
           <textarea class="textarea" name="message" rows="3" placeholder="Сообщение клиенту, например: «Здравствуйте! Подобрал варианты по вашему запросу — отметьте, что нравится»" data-field="message">${esc(state.message)}</textarea>
           <div class="chosen__list">
             ${state.chosen.length ? state.chosen.map((o, i) => `<div class="chosen-item">
@@ -396,10 +396,18 @@
     return state.results.find((o) => o.id === id) || (state.detail && state.detail.id === id ? state.detail : null);
   }
 
+  /** «Подборка на 09.11.2026 14:05» по тюменскому времени (часовой пояс задаётся сервером). */
+  function defaultTitle() {
+    const tz = BOOT.timezone || 'Asia/Yekaterinburg';
+    const p = Object.fromEntries(new Intl.DateTimeFormat('ru-RU', { timeZone: tz, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+      .formatToParts(new Date()).map((x) => [x.type, x.value]));
+    return `Подборка на ${p.day}.${p.month}.${p.year} ${p.hour}:${p.minute}`;
+  }
+
   function openBuilder(prefill) {
     state.view = 'builder';
     state.chosen = prefill || [];
-    state.title = '';
+    state.title = defaultTitle();
     state.message = '';
     render();
     search(true);

@@ -6,6 +6,8 @@ import { db } from './db.js';
 import { installNetwork } from './net.js';
 import { imageHandler } from './images.js';
 import { bus } from './events.js';
+import { resolveScope, getOrgStructure, getFullAccess, setFullAccess } from './access.js';
+import { queryDashboard, dashboardUsers } from './dashboard.js';
 import { createSession, requireSession, escapeHtml } from './session.js';
 import {
   validDomain, callWithToken, savePortal, getPortal, deletePortal, bindPlacements, scheduleTokenRefresh,
@@ -141,6 +143,11 @@ async function buildAgentSession(req) {
   }
   // запрос идёт только на сохранённый при установке домен портала
   const me = (await callWithToken(portal.domain, 'user.current', {}, a.accessToken)).result;
+  // Администратор открыл приложение — обновляем сохранённый доступ к порталу:
+  // так подхватываются права, добавленные приложению после установки.
+  if (me.ADMIN && a.refreshToken && a.domain === portal.domain) {
+    savePortal({ ...a, clientEndpoint: portal.client_endpoint });
+  }
   return {
     portal,
     accessToken: a.accessToken,
@@ -174,18 +181,18 @@ app.post('/b24/placement', asyncH(async (req, res) => {
     user: { id: base.userId, name: base.userName },
     portalDomain: portal.domain,
     inBitrix: true,
+    timezone: config.timezone,
   }));
 }));
 
 // Главная страница приложения (пункт в меню «Приложения»)
 app.post('/b24/handler', asyncH(async (req, res) => {
   const { portal, base } = await buildAgentSession(req);
-  const stats = catalogStats();
-  const recent = db.prepare(`SELECT id, title, entity_type, entity_id, created_by_name, created_at, view_count, submitted_at
-    FROM selections WHERE member_id = ? ORDER BY id DESC LIMIT 50`).all(portal.member_id);
-  res.type('html').send(renderWithBoot('app/admin.html', {
+  res.type('html').send(renderWithBoot('app/dashboard.html', {
     token: createSession({ ...base, entityType: null, entityId: null }),
-    stats, recent, portalDomain: portal.domain, inBitrix: true,
+    user: { id: base.userId, name: base.userName, isAdmin: base.isAdmin },
+    portalDomain: portal.domain, inBitrix: true, timezone: config.timezone,
+    stats: catalogStats(),
     sections: CATALOG_SECTIONS.map((s) => ({ category: s.category, label: s.label })),
   }));
 }));
@@ -300,6 +307,37 @@ pub.post('/:token/items/:itemId', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------------- Дашборд ----------------
+
+const ROLE_LABELS = {
+  admin: 'Администратор портала — все подборки',
+  full_access: 'Полный доступ — все подборки',
+  company_head: 'Руководитель компании — все подборки',
+  head: 'Руководитель — ваши подборки и подборки сотрудников подразделения',
+  employee: 'Ваши подборки',
+};
+
+api.get('/dashboard', asyncH(async (req, res) => {
+  const s = req.session;
+  const scope = await resolveScope(s);
+  const portal = getPortal(s.memberId);
+  const org = scope.all ? null : await getOrgStructure(s.memberId);
+  const result = queryDashboard(s.memberId, scope, req.query, portal?.domain || '');
+  res.json({
+    scope: {
+      role: scope.role, all: !!scope.all, label: ROLE_LABELS[scope.role] || '',
+      departments: scope.departments || [], people: scope.all ? null : scope.userIds.length, warning: scope.warning || null,
+    },
+    users: dashboardUsers(s.memberId, scope, org),
+    catalog: catalogStats(),
+    ...result,
+  });
+}));
+
+const requireAdmin = (req, res, next) => (req.session.isAdmin ? next() : res.status(403).json({ error: 'Только для администратора портала' }));
+api.get('/settings/full-access', requireAdmin, (req, res) => res.json({ users: getFullAccess(req.session.memberId) }));
+api.post('/settings/full-access', requireAdmin, (req, res) => res.json({ users: setFullAccess(req.session.memberId, req.body?.users) }));
+
 app.use('/api/public', pub);
 app.use('/api', api); // после публичного роутера: требует сессию сотрудника
 
@@ -325,10 +363,20 @@ if (config.devMode) {
     const session = { memberId: 'dev', userId: 1, userName: 'Тестовый Сотрудник', isAdmin: true, entityType, entityId, leadId: null };
     res.type('html').send(renderWithBoot('app/index.html', {
       token: createSession(session), entityType, entityId, leadId: null, entityTitle: `Тестовый ${entityType} #${entityId}`,
-      user: { id: 1, name: session.userName }, portalDomain: 'dev.bitrix24.ru', inBitrix: false,
+      user: { id: 1, name: session.userName }, portalDomain: 'dev.bitrix24.ru', inBitrix: false, timezone: config.timezone,
     }));
   });
-  console.log('DEV: вкладка доступна по адресу /dev/placement?entity=lead&id=1');
+  app.get('/dev/dashboard', (req, res) => {
+    const isAdmin = req.query.admin !== '0';
+    const userId = Number(req.query.user) || 1;
+    const base = { memberId: 'dev', userId, userName: `Тестовый пользователь ${userId}`, isAdmin };
+    res.type('html').send(renderWithBoot('app/dashboard.html', {
+      token: createSession({ ...base, entityType: null, entityId: null }),
+      user: { id: userId, name: base.userName, isAdmin }, portalDomain: 'dev.bitrix24.ru', inBitrix: false, timezone: config.timezone,
+      stats: catalogStats(), sections: CATALOG_SECTIONS.map((s) => ({ category: s.category, label: s.label })),
+    }));
+  });
+  console.log('DEV: вкладка доступна по адресу /dev/placement?entity=lead&id=1, дашборд — /dev/dashboard');
 }
 
 // ---------------- Ошибки ----------------
