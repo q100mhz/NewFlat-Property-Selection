@@ -18,7 +18,7 @@ import {
 } from './catalog/catalog.js';
 import {
   createSelection, listSelectionsForAgent, getSelectionForAgent, setArchived,
-  getPublicSelection, registerView, saveReaction, allowedEntities, scheduleDigests,
+  getPublicSelection, registerView, saveReaction, allowedEntities, scheduleDigests, deleteSelection,
 } from './selections.js';
 
 if (!config.devMode) {
@@ -269,6 +269,13 @@ api.get('/selections/:id', requireEntity, (req, res) => {
   const s = getSelectionForAgent(req.session, Number(req.params.id));
   if (!s) return res.status(404).json({ error: 'Подборка не найдена' });
   res.json(s);
+});
+api.delete('/selections/:id', requireEntity, (req, res) => {
+  const r = deleteSelection(req.session, Number(req.params.id));
+  if (!r) return res.status(404).json({ error: 'Подборка не найдена' });
+  if (r === 'not_archived') return res.status(400).json({ error: 'Удалить можно только подборку из архива' });
+  if (r === 'forbidden') return res.status(403).json({ error: 'Удалить подборку может её автор или администратор' });
+  res.json({ ok: true });
 });
 api.post('/selections/:id/archive', requireEntity, (req, res) => {
   const ok = setArchived(req.session, Number(req.params.id), !!req.body?.archived);

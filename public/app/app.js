@@ -214,7 +214,8 @@
         </div>`).join('')}
         <div class="sel__actions">
           <button class="btn btn-primary btn-sm" data-act="based-on" data-id="${s.id}">Новая подборка на основе</button>
-          <button class="btn btn-light btn-sm" data-act="archive" data-id="${s.id}" data-archived="${s.archived ? 0 : 1}">${s.archived ? 'Вернуть из архива' : 'В архив'}</button>
+          <button class="btn btn-light btn-sm" data-act="archive" data-id="${s.id}" data-archived="${s.archived ? 0 : 1}" title="${s.archived ? '' : 'Ссылка перестанет открываться у клиента; подборку можно вернуть'}">${s.archived ? 'Вернуть из архива' : 'В архив'}</button>
+          ${s.archived ? `<button class="btn btn-light btn-sm btn-danger-text" data-act="delete" data-id="${s.id}">Удалить навсегда</button>` : ''}
         </div>
       </div>` : ''}
     </div>`;
@@ -471,10 +472,23 @@
         break;
       case 'archive':
         try {
-          await api(`/selections/${id}/archive`, { method: 'POST', body: { archived: el.dataset.archived === '1' } });
+          const toArchive = el.dataset.archived === '1';
+          await api(`/selections/${id}/archive`, { method: 'POST', body: { archived: toArchive } });
           await loadHistory(); render();
+          toast(toArchive ? 'Подборка в архиве: ссылка у клиента не открывается. Удалить можно в «Показать архив»' : 'Подборка возвращена из архива');
         } catch (err) { toast(err.message); }
         break;
+      case 'delete': {
+        const s = state.selections.find((x) => x.id === id);
+        if (!confirm(`Удалить подборку «${s?.title || 'Подборка №' + id}» навсегда?\n\nОценки и комментарии клиента будут удалены, ссылка перестанет работать. Отменить это нельзя.`)) break;
+        try {
+          await api(`/selections/${id}`, { method: 'DELETE' });
+          state.expanded.delete(id);
+          await loadHistory(); render();
+          toast('Подборка удалена');
+        } catch (err) { toast(err.message); }
+        break;
+      }
       case 'based-on': {
         const s = state.selections.find((x) => x.id === id);
         // берём понравившиеся и неоценённые, не снятые с сайта

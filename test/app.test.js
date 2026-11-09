@@ -207,3 +207,19 @@ test('главный администратор приложения видит 
   assert.ok(config.appAdminIds.includes(11341));
   assert.deepEqual(await resolveScope({ memberId: 'x', userId: 11341, isAdmin: true, isAppAdmin: true }), { all: true, role: 'app_admin' });
 });
+
+test('удаление: только из архива и только автор или администратор', () => {
+  const { db } = m;
+  const info = db.prepare(`INSERT INTO selections (token, member_id, entity_type, entity_id, created_by_id) VALUES ('DelTokenDelTokenDelT', 'md', 'lead', 3, 50)`).run();
+  db.prepare(`INSERT INTO selection_items (selection_id, object_id, snapshot_json) VALUES (?, 1, '{}')`).run(info.lastInsertRowid);
+  const id = info.lastInsertRowid;
+  const author = { memberId: 'md', entityType: 'lead', entityId: 3, userId: 50, isAdmin: false };
+  const other = { ...author, userId: 51 };
+  assert.equal(m.sel.deleteSelection(author, id), 'not_archived');
+  m.sel.setArchived(author, id, true);
+  assert.equal(m.sel.getPublicSelection('DelTokenDelTokenDelT'), null, 'архивная ссылка у клиента не открывается');
+  assert.equal(m.sel.deleteSelection(other, id), 'forbidden');
+  assert.equal(m.sel.deleteSelection({ ...other, entityId: 4 }, id), null, 'чужая карточка — не найдена');
+  assert.equal(m.sel.deleteSelection({ ...other, isAdmin: true }, id), 'ok');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM selection_items WHERE selection_id = ?').get(id).n, 0, 'объекты удалены каскадом');
+});

@@ -147,7 +147,23 @@ export function setArchived(session, id, archived) {
   const s = db.prepare('SELECT * FROM selections WHERE id = ?').get(id);
   if (!canAccess(session, s)) return false;
   db.prepare('UPDATE selections SET archived = ? WHERE id = ?').run(archived ? 1 : 0, id);
+  emitSelectionChange(s, 'archive');
   return true;
+}
+
+/**
+ * Удаление навсегда — только из архива, только автор подборки или администратор.
+ * Возвращает null (не найдена), 'not_archived', 'forbidden' или 'ok'.
+ */
+export function deleteSelection(session, id) {
+  const s = db.prepare('SELECT * FROM selections WHERE id = ?').get(id);
+  if (!canAccess(session, s)) return null;
+  if (!s.archived) return 'not_archived';
+  if (!session.isAdmin && Number(s.created_by_id) !== Number(session.userId)) return 'forbidden';
+  db.prepare('DELETE FROM selections WHERE id = ?').run(id); // объекты подборки удаляются каскадом
+  console.log(`[delete] подборка ${id} (${s.entity_type} #${s.entity_id}) удалена пользователем ${session.userId}`);
+  emitSelectionChange(s, 'delete');
+  return 'ok';
 }
 
 // ---------- Публичная часть (клиент) ----------
