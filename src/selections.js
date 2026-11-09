@@ -5,6 +5,7 @@ import { getObjectDetail, getObjectRow } from './catalog/catalog.js';
 import { callAsApp, getPortal } from './bitrix.js';
 import { proxyObject } from './images.js';
 import { emitSelectionChange } from './events.js';
+import { startForSelection, checkSelection } from './automation.js';
 
 const MAX_ITEMS = 50;
 
@@ -59,6 +60,10 @@ export async function createSelection(session, { title, message, items }) {
     return info.lastInsertRowid;
   });
   const id = tx();
+  // автоматизация стадий: новая подборка запускает сценарий заново
+  const created = db.prepare('SELECT * FROM selections WHERE id = ?').get(id);
+  startForSelection(created);
+  checkSelection(id).catch((e) => console.warn('[automation]', e.message));
   return getSelectionForAgent(session, id);
 }
 
@@ -90,6 +95,7 @@ function selectionView(s, items, opts) {
     createdAt: s.created_at, firstViewedAt: s.first_viewed_at, lastViewedAt: s.last_viewed_at, viewCount: s.view_count,
     submittedAt: s.submitted_at, submitCount: s.submit_count, archived: !!s.archived,
     lastActivityAt: s.last_activity_at, digestPending: !!s.digest_pending,
+    autoState: s.auto_state, autoNote: s.auto_note,
     stats: {
       total: its.length,
       liked: its.filter((i) => i.reaction === 'like').length,
@@ -177,6 +183,11 @@ export function registerView(token) {
   db.prepare(`UPDATE selections SET view_count = view_count + 1, last_viewed_at = datetime('now'),
     first_viewed_at = COALESCE(first_viewed_at, datetime('now')) WHERE id = ?`).run(s.id);
   emitSelectionChange(s, 'view');
+  // пока лид не дошёл до «Обсуждения вариантов», проверяем стадию не чаще раза в 2 минуты
+  const checkedAgo = s.auto_checked_at ? Date.now() - Date.parse(s.auto_checked_at.replace(' ', 'T') + 'Z') : Infinity;
+  if (s.auto_state === 'waiting' && checkedAgo > 2 * 60e3) {
+    checkSelection(s.id).catch((e) => console.warn('[automation]', e.message));
+  }
   if (first) {
     notifyAgents(s, `Клиент открыл подборку «${selectionName(s)}» (${entityLink(s)}).`).catch((e) => console.warn('[notify]', e.message));
   }
@@ -228,6 +239,11 @@ async function sendDigest(s) {
   notifyAgents(s, `${verb} «${selectionName(s)}» (${entityLink(s)}): оценено ${rated} из ${items.length}, 👍 ${liked}, 👎 ${disliked}${viewing ? `, на просмотр: ${viewing}` : ''}.`)
     .catch((e) => console.warn('[notify]', e.message));
   emitSelectionChange(s, 'digest');
+  try {
+    await checkSelection(s.id, { evaluate: true, items });
+  } catch (e) {
+    console.warn('[automation]', e.message);
+  }
   return true;
 }
 

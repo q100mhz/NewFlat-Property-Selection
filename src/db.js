@@ -95,6 +95,10 @@ CREATE TABLE IF NOT EXISTS meta (
 const selCols = db.prepare('PRAGMA table_info(selections)').all().map((c) => c.name);
 if (!selCols.includes('last_activity_at')) db.exec('ALTER TABLE selections ADD COLUMN last_activity_at TEXT');
 if (!selCols.includes('digest_pending')) db.exec('ALTER TABLE selections ADD COLUMN digest_pending INTEGER NOT NULL DEFAULT 0');
+// автоматизация стадий лида: waiting | active | stopped | done | superseded (NULL — не применяется)
+if (!selCols.includes('auto_state')) db.exec('ALTER TABLE selections ADD COLUMN auto_state TEXT');
+if (!selCols.includes('auto_note')) db.exec('ALTER TABLE selections ADD COLUMN auto_note TEXT');
+if (!selCols.includes('auto_checked_at')) db.exec('ALTER TABLE selections ADD COLUMN auto_checked_at TEXT');
 
 export function getMeta(key) {
   return db.prepare('SELECT value FROM meta WHERE key = ?').get(key)?.value ?? null;

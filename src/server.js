@@ -8,6 +8,7 @@ import { imageHandler } from './images.js';
 import { bus } from './events.js';
 import { resolveScope, getOrgStructure, getFullAccess, setFullAccess } from './access.js';
 import { queryDashboard, dashboardUsers } from './dashboard.js';
+import { getRules, getLeadStages, saveRules } from './automation.js';
 import { createSession, requireSession, escapeHtml } from './session.js';
 import {
   validDomain, callWithToken, savePortal, getPortal, deletePortal, bindPlacements, scheduleTokenRefresh,
@@ -336,6 +337,15 @@ api.get('/dashboard', asyncH(async (req, res) => {
 
 const requireAdmin = (req, res, next) => (req.session.isAdmin ? next() : res.status(403).json({ error: 'Только для администратора портала' }));
 api.get('/settings/full-access', requireAdmin, (req, res) => res.json({ users: getFullAccess(req.session.memberId) }));
+api.get('/settings/stage-rules', requireAdmin, asyncH(async (req, res) => {
+  try {
+    const [rules, stages] = await Promise.all([getRules(req.session.memberId), getLeadStages(req.session.memberId, { force: true })]);
+    res.json({ rules, stages });
+  } catch (e) {
+    res.json({ rules: null, stages: [], error: 'Не удалось получить стадии лидов из Битрикс24: ' + e.message });
+  }
+}));
+api.post('/settings/stage-rules', requireAdmin, (req, res) => res.json({ rules: saveRules(req.session.memberId, req.body || {}) }));
 api.post('/settings/full-access', requireAdmin, (req, res) => res.json({ users: setFullAccess(req.session.memberId, req.body?.users) }));
 
 app.use('/api/public', pub);

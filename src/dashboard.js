@@ -1,28 +1,7 @@
 import { db } from './db.js';
 import { config } from './config.js';
 import { publicLink } from './selections.js';
-
-/** Смещение часового пояса (минуты) для момента времени. */
-function tzOffsetMin(date, timeZone) {
-  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
-    timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).formatToParts(date).map((x) => [x.type, x.value]));
-  const asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
-  return Math.round((asUtc - date.getTime()) / 60e3);
-}
-
-/** Начало суток (полночь по часовому поясу агентства) для даты YYYY-MM-DD, в UTC. */
-function localMidnightUtc(ymd, timeZone) {
-  const [y, m, d] = ymd.split('-').map(Number);
-  const guess = new Date(Date.UTC(y, m - 1, d));
-  return new Date(guess.getTime() - tzOffsetMin(guess, timeZone) * 60e3);
-}
-
-function localYmd(date, timeZone) {
-  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
-    .formatToParts(date).map((x) => [x.type, x.value]));
-  return `${p.year}-${p.month}-${p.day}`;
-}
+import { localMidnightUtc, localYmd } from './time.js';
 
 const sqlTime = (d) => d.toISOString().slice(0, 19).replace('T', ' ');
 const DAY = 24 * 3600e3;

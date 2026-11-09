@@ -157,6 +157,13 @@
     else if (s.viewCount) b.push(`<span class="badge badge-info">Просмотрена${s.viewCount > 1 ? ` ${s.viewCount} ${plural(s.viewCount, 'раз', 'раза', 'раз')}` : ''}, без оценок</span>`);
     else b.push('<span class="badge">Не открыта</span>');
     if (s.submittedAt && !s.digestPending) b.push(`<span class="badge" title="Сводка с оценками добавлена в таймлайн карточки">Сводка в таймлайне ${esc(dateTime(s.submittedAt))}</span>`);
+    const AUTO = {
+      waiting: ['badge', 'Авто: ждёт стадию «Обсуждение вариантов»'],
+      active: ['badge badge-info', 'Авто: стадия изменится по ответу клиента'],
+      done: ['badge badge-like', 'Авто: ' + (s.autoNote || 'стадия изменена')],
+      stopped: ['badge badge-warn', 'Авто: остановлена — лид перемещён вручную'],
+    }[s.autoState];
+    if (AUTO) b.push(`<span class="${AUTO[0]}" title="${esc(s.autoNote || '')}">${esc(AUTO[1])}</span>`);
     if (s.archived) b.push('<span class="badge">В архиве</span>');
     if (s.entityType !== BOOT.entityType) b.push('<span class="badge badge-warn">Из лида</span>');
     return b.join(' ');

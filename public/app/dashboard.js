@@ -14,6 +14,7 @@
     filters: { period: 'week', from: '', to: '', userId: '', status: '', q: '', archived: false, ...saved },
     data: null, page: 1, loading: false, error: null,
     access: null,
+    stageRules: null,           // { rules, stages, error }
   };
 
   async function api(path, opts = {}) {
@@ -159,10 +160,38 @@
     </tr>`;
   }
 
+  function renderStageRules() {
+    const sr = state.stageRules;
+    if (!sr) return '<div class="panel"><h3>Автоматизация стадий лида</h3><span class="spinner"></span></div>';
+    const r = sr.rules || {};
+    const opt = (name, value) => `<select class="select" name="${name}" data-rule>
+      <option value="">— не выбрано —</option>
+      ${sr.stages.map((s) => `<option value="${esc(s.id)}" ${s.id === value ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+    </select>`;
+    return `<div class="panel">
+      <h3>Автоматизация стадий лида</h3>
+      ${sr.error ? `<div class="alert">${esc(sr.error)}</div>` : ''}
+      <ul class="rules">
+        <li>Срабатывает вместе со сводкой — через 5 минут после последнего изменения клиента, только если лид на стадии «обсуждения».</li>
+        <li>Клиент отметил «хочу посмотреть» хотя бы один объект → стадия «просмотра» и дело «Согласовать просмотр» ответственному.</li>
+        <li>Клиент оценил все объекты и все «не подходит» → возврат на стадию «подбора». В остальных случаях стадия не меняется.</li>
+        <li>Если лид перевели с «обсуждения» на другую стадию, по этой подборке автоматизация останавливается. Новая подборка запускает сценарий заново.</li>
+      </ul>
+      <label class="check"><input type="checkbox" name="enabled" ${r.enabled ? 'checked' : ''} data-rule> Автоматизация включена</label>
+      <div class="rule-grid">
+        <label><span class="muted small">Стадия обсуждения (условие)</span>${opt('discussion', r.discussion)}</label>
+        <label><span class="muted small">Клиент хочет на просмотр →</span>${opt('viewing', r.viewing)}</label>
+        <label><span class="muted small">Ничего не подошло →</span>${opt('rejected', r.rejected)}</label>
+      </div>
+      ${r.source === 'detected' ? '<div class="muted small">Стадии найдены автоматически по названиям. Нажмите «Сохранить», чтобы закрепить настройку.</div>' : ''}
+      <button class="btn btn-primary btn-sm" data-act="save-rules">Сохранить</button>
+    </div>`;
+  }
+
   function renderAdmin(d) {
     const c = d.catalog;
     const acc = state.access;
-    return `<div class="panel">
+    return renderStageRules() + `<div class="panel">
       <h3>Доступ к подборкам</h3>
       <ul class="rules">
         <li><b>Администраторы портала</b> и <b>руководитель головного подразделения</b> видят все подборки.</li>
@@ -180,6 +209,24 @@
       <div class="kpis kpis--small" style="margin-top:10px">${(BOOT.sections || []).map((s) => `<div class="kpi"><b>${(c.byCategory[s.category] || 0).toLocaleString('ru-RU')}</b><span>${esc(s.label)}</span></div>`).join('')}</div>
       <button class="btn btn-blue btn-sm" data-act="recrawl">Обновить каталог сейчас</button>
     </details>`;
+  }
+
+  // ---------- Автоматизация стадий ----------
+  async function loadStageRules() {
+    if (!BOOT.user?.isAdmin) return;
+    try { state.stageRules = await api('/settings/stage-rules'); } catch (e) { state.stageRules = { rules: null, stages: [], error: e.message }; }
+    render();
+  }
+
+  async function saveStageRules() {
+    const get = (n) => $app.querySelector(`[data-rule][name="${n}"]`);
+    const body = { enabled: get('enabled').checked, discussion: get('discussion').value, viewing: get('viewing').value, rejected: get('rejected').value };
+    if (body.enabled && (!body.discussion || !body.viewing || !body.rejected)) { toast('Выберите все три стадии'); return; }
+    try {
+      const { rules } = await api('/settings/stage-rules', { method: 'POST', body });
+      state.stageRules = { ...state.stageRules, rules: { ...rules, source: 'saved' } };
+      render(); toast(rules.enabled ? 'Автоматизация включена' : 'Автоматизация выключена');
+    } catch (e) { toast(e.message); }
   }
 
   // ---------- Доступ ----------
@@ -222,6 +269,7 @@
     if (!a) return;
     if (a.dataset.act === 'more') { state.page += 1; load(false); }
     if (a.dataset.act === 'add-access') pickUsers();
+    if (a.dataset.act === 'save-rules') saveStageRules();
     if (a.dataset.act === 'recrawl') {
       a.disabled = true;
       try { await api('/catalog/recrawl', { method: 'POST' }); toast('Обновление каталога запущено, это займёт несколько минут'); } catch (err) { toast(err.message); }
@@ -235,6 +283,10 @@
   });
   $app.addEventListener('change', (e) => {
     const t = e.target;
+    if (t.hasAttribute('data-rule')) { // черновик настройки сохраняется кнопкой, но переживает перерисовку
+      if (state.stageRules) state.stageRules.rules = { ...(state.stageRules.rules || {}), [t.name]: t.type === 'checkbox' ? t.checked : t.value };
+      return;
+    }
     if (!t.hasAttribute('data-f')) return;
     if (t.type === 'checkbox') state.filters[t.name] = t.checked;
     else if (t.tagName === 'SELECT' || t.type === 'date') state.filters[t.name] = t.value;
@@ -245,6 +297,6 @@
   // статусы «оценивает сейчас» устаревают — обновляем раз в минуту
   setInterval(() => { if (!document.hidden && document.activeElement?.tagName !== 'INPUT') load(true); }, 60e3);
 
-  const start = () => { load(true); loadAccess(); };
+  const start = () => { load(true); loadAccess(); loadStageRules(); };
   if (hasBX()) BX24.init(start); else start();
 })();

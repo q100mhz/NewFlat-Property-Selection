@@ -42,3 +42,5 @@
 details.panel summary { cursor: pointer; font-weight: 600; font-size: 15px; }
 details.panel[open] summary { margin-bottom: 10px; }
 .kpis--small .kpi { box-shadow: none; background: var(--surface-2); }
+.rule-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 10px 0; }
+.rule-grid label { display: flex; flex-direction: column; gap: 4px; }
