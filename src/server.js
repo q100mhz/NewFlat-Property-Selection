@@ -156,7 +156,8 @@ async function buildAgentSession(req) {
       memberId: portal.member_id,
       userId: Number(me.ID),
       userName: [me.NAME, me.LAST_NAME].filter(Boolean).join(' ') || me.EMAIL || `Пользователь ${me.ID}`,
-      isAdmin: !!me.ADMIN,
+      isAdmin: !!me.ADMIN || config.appAdminIds.includes(Number(me.ID)),
+      isAppAdmin: config.appAdminIds.includes(Number(me.ID)),
     },
   };
 }
@@ -311,6 +312,7 @@ pub.post('/:token/items/:itemId', (req, res) => {
 // ---------------- Дашборд ----------------
 
 const ROLE_LABELS = {
+  app_admin: 'Главный администратор приложения — все подборки и настройки',
   admin: 'Администратор портала — все подборки',
   full_access: 'Полный доступ — все подборки',
   company_head: 'Руководитель компании — все подборки',

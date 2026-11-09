@@ -200,3 +200,10 @@ test('первое открытие подборки клиентом: увед�
     global.fetch = realFetch;
   }
 });
+
+test('главный администратор приложения видит все подборки', async () => {
+  const { resolveScope } = await import('../src/access.js');
+  const { config } = await import('../src/config.js');
+  assert.ok(config.appAdminIds.includes(11341));
+  assert.deepEqual(await resolveScope({ memberId: 'x', userId: 11341, isAdmin: true, isAppAdmin: true }), { all: true, role: 'app_admin' });
+});

@@ -98,6 +98,7 @@ export function setFullAccess(memberId, list) {
 
 /** Область видимости для сессии сотрудника. */
 export async function resolveScope(session) {
+  if (session.isAppAdmin) return { all: true, role: 'app_admin' };
   if (session.isAdmin) return { all: true, role: 'admin' };
   if (getFullAccess(session.memberId).some((u) => u.id === session.userId)) return { all: true, role: 'full_access' };
   const org = await getOrgStructure(session.memberId);

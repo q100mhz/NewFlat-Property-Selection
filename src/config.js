@@ -24,6 +24,9 @@ export const config = {
   b24ClientSecret: env.B24_CLIENT_SECRET || '',
   // Разрешённые домены порталов (через запятую). Пусто = любой портал, прошедший проверку client_id.
   b24AllowedDomains: list(env.B24_ALLOWED_DOMAINS),
+  // Главные администраторы приложения (ID пользователей Битрикс24): видят все подборки и управляют настройками,
+  // даже если не являются администраторами портала
+  appAdminIds: list(env.APP_ADMIN_IDS || '11341').map(Number).filter(Boolean),
 
   // Секрет для подписи сессий сотрудников внутри iframe
   sessionSecret: env.SESSION_SECRET || '',

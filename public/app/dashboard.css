@@ -44,3 +44,5 @@ details.panel[open] summary { margin-bottom: 10px; }
 .kpis--small .kpi { box-shadow: none; background: var(--surface-2); }
 .rule-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 10px 0; }
 .rule-grid label { display: flex; flex-direction: column; gap: 4px; }
+.settings-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 24px 0 10px; }
+.settings-head h2 { margin: 0; font-size: 18px; }
