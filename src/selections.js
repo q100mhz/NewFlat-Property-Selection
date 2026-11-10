@@ -67,9 +67,22 @@ export async function createSelection(session, { title, message, items }) {
   return getSelectionForAgent(session, id);
 }
 
+/** Объект по ссылке показывается в актуальном виде: правки сотрудника видны во всех подборках. */
+function liveLinkObject(snap, row) {
+  const detail = row.detail_json ? JSON.parse(row.detail_json) : {};
+  return {
+    ...snap,
+    title: row.title, address: row.address, price: row.price, rooms: row.rooms, floor: row.floor, floors: row.floors,
+    area_total: row.area_total, area_living: row.area_living, area_kitchen: row.area_kitchen, thumb: row.thumb,
+    photos: detail.photos || [], description: detail.description || '', complex: detail.complex || null, props: {},
+    source: 'link', sourceName: row.source_name, categoryLabel: null, url: row.url,
+  };
+}
+
 function itemView(r, { full = false } = {}) {
-  const snap = proxyObject(JSON.parse(r.snapshot_json));
   const current = getObjectRow(r.object_id);
+  let snap = proxyObject(JSON.parse(r.snapshot_json));
+  if (current?.source === 'link') snap = liveLinkObject(snap, current);
   const base = {
     itemId: r.id, objectId: r.object_id, position: r.position, agentNote: r.agent_note,
     reaction: r.reaction, reasons: r.reasons_json ? JSON.parse(r.reasons_json) : [],
@@ -83,6 +96,7 @@ function itemView(r, { full = false } = {}) {
     object: {
       id: snap.id, url: snap.url, title: snap.title, address: snap.address, price: snap.price, thumb: snap.thumb,
       rooms: snap.rooms, floor: snap.floor, floors: snap.floors, area_total: snap.area_total, categoryLabel: snap.categoryLabel,
+      source: snap.source || 'newflat', sourceName: snap.sourceName || null,
     },
   };
 }
@@ -178,6 +192,11 @@ export function getPublicSelection(token) {
   if (!s || s.archived) return null;
   const items = itemsOf(s.id).map((r) => {
     const v = itemView(r, { full: true });
+    // клиенту не передаём ссылку на источник для объектов не с сайта агентства (и сведения о площадке)
+    if (v.object.source === 'link') {
+      const { url, sourceName, source, ...rest } = v.object;
+      v.object = rest;
+    }
     return {
       itemId: v.itemId, agentNote: v.agentNote, reaction: v.reaction, reasons: v.reasons,
       clientComment: v.clientComment, wantViewing: v.wantViewing, removed: v.removed, object: v.object,

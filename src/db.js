@@ -98,6 +98,12 @@ if (!selCols.includes('digest_pending')) db.exec('ALTER TABLE selections ADD COL
 // автоматизация стадий лида: waiting | active | stopped | done | superseded (NULL — не применяется)
 if (!selCols.includes('auto_state')) db.exec('ALTER TABLE selections ADD COLUMN auto_state TEXT');
 if (!selCols.includes('auto_note')) db.exec('ALTER TABLE selections ADD COLUMN auto_note TEXT');
+// объекты, добавленные по ссылке (застройщики, ЦИАН, Авито…): source = 'link'
+const objCols = db.prepare('PRAGMA table_info(objects)').all().map((c) => c.name);
+for (const [col, def] of [['source', "TEXT NOT NULL DEFAULT 'newflat'"], ['source_name', 'TEXT'], ['created_by', 'INTEGER'], ['needs_edit', 'INTEGER NOT NULL DEFAULT 0'], ['edited_at', 'TEXT']]) {
+  if (!objCols.includes(col)) db.exec(`ALTER TABLE objects ADD COLUMN ${col} ${def}`);
+}
+db.exec("CREATE INDEX IF NOT EXISTS idx_objects_source ON objects(source, url)");
 if (!selCols.includes('auto_checked_at')) db.exec('ALTER TABLE selections ADD COLUMN auto_checked_at TEXT');
 
 export function getMeta(key) {

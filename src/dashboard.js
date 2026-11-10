@@ -29,6 +29,7 @@ const STATUS_HAVING = {
   opened: 's.view_count > 0 AND COALESCE(SUM(i.reaction IS NOT NULL), 0) = 0',
   rated: 'COALESCE(SUM(i.reaction IS NOT NULL), 0) > 0',
   viewing: 'COALESCE(SUM(i.want_viewing), 0) > 0',
+  external: 'COALESCE(SUM(i.object_id >= 1000000000), 0) > 0', // есть объекты, добавленные по ссылке
 };
 
 /**

@@ -9,6 +9,7 @@ import { bus } from './events.js';
 import { resolveScope, getOrgStructure, getFullAccess, setFullAccess } from './access.js';
 import { queryDashboard, dashboardUsers } from './dashboard.js';
 import { getRules, getLeadStages, saveRules } from './automation.js';
+import { addByLink, updateLinkObject, addUploadedPhoto, photoPath } from './external/service.js';
 import { createSession, requireSession, escapeHtml } from './session.js';
 import {
   baseHeaders, b24Csp, clientCsp, newNonce, inlineAssets, rateLimit, guardEnumeration, notFound, isExternal,
@@ -68,6 +69,16 @@ const staticOpts = { maxAge: config.devMode ? 0 : '1h', index: false, fallthroug
 app.use('/static/client', express.static(path.join(PUBLIC, 'client'), staticOpts));
 app.use('/static/shared', express.static(path.join(PUBLIC, 'shared'), staticOpts));
 app.get('/img', rateLimit('img', 900, 60e3), imageHandler);
+// фото объектов, добавленных по ссылке (хранятся у нас)
+app.get('/photo/:id/:file', rateLimit('img', 900, 60e3), (req, res) => {
+  const p = photoPath(req.params.id, req.params.file);
+  if (!p) return notFound(req, res);
+  res.set({
+    'Cache-Control': 'public, max-age=604800',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", // SVG-планировки: без скриптов
+  });
+  res.sendFile(p);
+});
 // проверка работоспособности — только изнутри сервера (Docker healthcheck), снаружи «не найдено»
 app.get('/health', (req, res) => (isExternal(req) ? notFound(req, res) : res.json({ ok: true })));
 
@@ -246,7 +257,8 @@ const requireEntity = (req, res, next) => {
 
 api.get('/catalog/meta', (_req, res) => {
   res.json({
-    sections: CATALOG_SECTIONS.map((s) => ({ category: s.category, label: s.label, deal: s.deal })),
+    sections: [...CATALOG_SECTIONS.map((s) => ({ category: s.category, label: s.label, deal: s.deal })),
+      { category: 'external', label: 'Добавленные по ссылке (застройщики, ЦИАН, Авито…)', deal: 'sale' }],
     reasons: DISLIKE_REASONS,
     stats: catalogStats(),
     siteUrl: config.siteUrl,
@@ -258,9 +270,15 @@ api.get('/catalog/object/:id', asyncH(async (req, res) => {
   if (!o) return res.status(404).json({ error: 'Объект не найден' });
   res.json(o);
 }));
-api.post('/catalog/resolve', asyncH(async (req, res) => {
+const linkLimit = rateLimit('link', 30, 60e3);
+api.post('/catalog/resolve', linkLimit, asyncH(async (req, res) => {
   const url = normalizeObjectUrl(req.body?.url);
-  if (!url) return res.status(400).json({ error: `Нужна ссылка на объект с ${new URL(config.siteUrl).host}` });
+  if (!url) {
+    // любой другой сайт: застройщики, ЦИАН, Авито… — универсальный разбор или черновик для ручного заполнения
+    const r = await addByLink(req.body?.url, req.session);
+    const o = await getObjectDetail({ id: r.id });
+    return res.json({ ...o, existed: r.existed, warning: r.warning || null });
+  }
   let o;
   try { o = await getObjectDetail({ url }, { force: true }); } catch (e) {
     return res.status(e.status === 404 ? 404 : 502).json({ error: e.status === 404 ? 'Объект не найден на сайте' : 'Сайт не ответил, попробуйте ещё раз' });
@@ -272,6 +290,20 @@ api.post('/catalog/recrawl', (req, res) => {
   if (!req.session.isAdmin) return res.status(403).json({ error: 'Только для администратора портала' });
   crawlCatalog().catch((e) => console.warn('[crawl]', e.message));
   res.json({ started: true });
+});
+
+// правка объекта, добавленного по ссылке (объекты с newflat72.ru не редактируются)
+api.patch('/objects/:id', (req, res) => {
+  const ok = updateLinkObject(Number(req.params.id), req.body || {}, req.session);
+  if (!ok) return res.status(404).json({ error: 'Объект не найден или не редактируется' });
+  getObjectDetail({ id: Number(req.params.id) }).then((o) => res.json(o));
+});
+api.post('/objects/:id/photos', rateLimit('upload', 120, 60e3), express.raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit: '15mb' }), (req, res) => {
+  if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Нужна фотография JPG, PNG или WEBP' });
+  const r = addUploadedPhoto(Number(req.params.id), req.body);
+  if (r.error === 'not_found') return res.status(404).json({ error: 'Объект не найден или не редактируется' });
+  if (r.error) return res.status(400).json({ error: r.error });
+  res.json(r);
 });
 
 // Живые изменения подборок карточки (Server-Sent Events). Объявлен до /selections/:id.

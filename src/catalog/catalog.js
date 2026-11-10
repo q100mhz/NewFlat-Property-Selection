@@ -178,6 +178,8 @@ export function rowToObject(r) {
     deal: r.deal, title: r.title, address: r.address, lat: r.lat, lng: r.lng, price: r.price,
     rooms: r.rooms, floor: r.floor, floors: r.floors, area_total: r.area_total, area_living: r.area_living,
     area_kitchen: r.area_kitchen, thumb: proxied(r.thumb), listed_at: r.listed_at, active: !!r.active,
+    source: r.source || 'newflat', sourceName: r.source === 'link' ? r.source_name : null, needsEdit: !!r.needs_edit,
+    ...(r.source === 'link' ? { categoryLabel: 'По ссылке: ' + (r.source_name || 'другой сайт') } : {}),
   };
 }
 
@@ -185,7 +187,8 @@ export function rowToObject(r) {
 export function searchCatalog(q = {}) {
   const where = ['active = 1'];
   const params = {};
-  if (q.category) {
+  if (q.category === 'external') where.push("source = 'link'");
+  else if (q.category) {
     const cats = String(q.category).split(',').filter((c) => sectionByCategory[c]);
     if (cats.length) { where.push(`category IN (${cats.map((_, i) => '@c' + i).join(',')})`); cats.forEach((c, i) => { params['c' + i] = c; }); }
   }
@@ -237,6 +240,8 @@ export function normalizeObjectUrl(input) {
 export async function getObjectDetail({ id, url }, { force = false } = {}) {
   let row = id ? db.prepare('SELECT * FROM objects WHERE id = ?').get(id) : null;
   if (!row && url) row = db.prepare('SELECT * FROM objects WHERE url = ?').get(url);
+  // объекты по ссылке не перечитываются: в них правки сотрудников
+  if (row?.source === 'link') return { ...rowToObject(row), ...(row.detail_json ? JSON.parse(row.detail_json) : {}) };
   const fresh = row?.detail_at && Date.now() - row.detail_at < config.detailTtlHours * 3600e3;
   if (row?.detail_json && fresh && !force) return proxyObject({ ...rowToObject(row), ...JSON.parse(row.detail_json) });
 

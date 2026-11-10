@@ -6,7 +6,7 @@
   const LS_KEY = 'propsel.dashboard.filters';
 
   const PERIODS = [['today', 'Сегодня'], ['yesterday', 'Вчера'], ['week', 'Неделя'], ['month', 'Месяц'], ['all', 'Всё время'], ['custom', 'Период']];
-  const STATUSES = [['', 'Все статусы'], ['not_opened', 'Не открыта'], ['opened', 'Открыта, без оценок'], ['rated', 'Есть оценки'], ['viewing', 'Хочет на просмотр']];
+  const STATUSES = [['', 'Все статусы'], ['not_opened', 'Не открыта'], ['opened', 'Открыта, без оценок'], ['rated', 'Есть оценки'], ['viewing', 'Хочет на просмотр'], ['external', 'С объектами по ссылке']];
 
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch (e) { /* хранилище недоступно */ }

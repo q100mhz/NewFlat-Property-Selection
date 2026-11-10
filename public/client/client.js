@@ -103,14 +103,14 @@
         ${o.categoryLabel ? `<div class="c-cat">${esc(o.categoryLabel)}</div>` : ''}
         <div class="c-price">${price(o.price)}${o.price_per_m2 ? `<span>${esc(o.price_per_m2)}</span>` : ''}</div>
         <h2 class="c-title">${esc(o.title)}</h2>
-        <a class="c-addr" href="${esc(U.safeUrl(mapUrl))}" target="_blank" rel="noopener noreferrer">📍 ${esc(o.address || 'Показать на карте')}</a>
+        ${o.address || (o.lat && o.lng) ? `<a class="c-addr" href="${esc(U.safeUrl(mapUrl))}" target="_blank" rel="noopener noreferrer">📍 ${esc(o.address || 'Показать на карте')}</a>` : ''}
         ${specs.length ? `<div class="c-specs">${specs.map(([v, l]) => `<div><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join('')}</div>` : ''}
         ${it.agentNote ? `<div class="c-note"><span>Комментарий специалиста</span>${esc(it.agentNote)}</div>` : ''}
         <button class="c-more" data-act="more" data-id="${it.itemId}">${isOpen ? 'Скрыть подробности ▲' : 'Подробнее об объекте ▼'}</button>
         ${isOpen ? `<div class="c-details">
           ${props.length ? `<dl>${props.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>` : ''}
           ${o.description ? `<p class="c-descr">${esc(o.description)}</p>` : ''}
-          <a class="c-site" href="${esc(U.safeUrl(o.url))}" target="_blank" rel="noopener noreferrer">Открыть на сайте →</a>
+          ${o.url ? `<a class="c-site" href="${esc(U.safeUrl(o.url))}" target="_blank" rel="noopener noreferrer">Открыть на сайте →</a>` : ''}
         </div>` : ''}
 
         <div class="c-react">

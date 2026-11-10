@@ -18,6 +18,7 @@
     title: '', message: '',
     created: null,
     detail: null,             // объект в модальном окне
+    editor: null,             // правка объекта, добавленного по ссылке: { obj, warning, saving }
     flash: new Set(),         // подборки, обновлённые клиентом только что
   };
 
@@ -67,7 +68,7 @@
     try {
       await loadHistory();
       ids.forEach((id) => state.flash.add(id));
-      if (state.view === 'history' && !state.detail) renderKeepFocus();
+      if (state.view === 'history' && !state.detail && !state.editor) renderKeepFocus();
       setTimeout(() => {
         ids.forEach((id) => state.flash.delete(id));
         document.querySelectorAll('.sel.is-flash').forEach((el) => el.classList.remove('is-flash'));
@@ -102,7 +103,7 @@
   }
 
   // статус «оценивает сейчас» устаревает сам — обновляем историю раз в минуту
-  setInterval(() => { if (state.view === 'history' && !state.detail && !state.created) renderKeepFocus(); }, 60e3);
+  setInterval(() => { if (state.view === 'history' && !state.detail && !state.created && !state.editor) renderKeepFocus(); }, 60e3);
 
   async function init() {
     try {
@@ -121,6 +122,7 @@
     $app.innerHTML = state.view === 'builder' ? renderBuilder() : renderHistory();
     if (state.created) $app.insertAdjacentHTML('beforeend', renderCreatedModal());
     if (state.detail) $app.insertAdjacentHTML('beforeend', renderDetailModal());
+    if (state.editor) $app.insertAdjacentHTML('beforeend', renderEditor());
     fitSoon();
   }
 
@@ -207,6 +209,7 @@
           <div class="sel-item__body">
             <a class="sel-item__title" href="${esc(U.safeUrl(i.object.url))}" target="_blank" rel="noopener noreferrer">${esc(i.object.title)}</a>
             <div class="muted small">${esc(i.object.address || '')}</div>
+            ${i.object.source === 'link' ? `<div class="link-tools">${linkTools({ ...i.object, id: i.objectId })}</div>` : ''}
             <div class="small"><b>${price(i.object.price)}</b>${i.currentPrice && i.currentPrice !== i.object.price ? ` <span class="badge badge-warn">сейчас ${price(i.currentPrice)}</span>` : ''}${i.removed ? ' <span class="badge badge-dislike">снят с сайта</span>' : ''}</div>
             ${i.reasons?.length ? `<div class="small reasons">Причины: ${i.reasons.map(esc).join(', ')}</div>` : ''}
             ${i.clientComment ? `<div class="small client-comment">💬 ${esc(i.clientComment)}</div>` : ''}
@@ -222,6 +225,14 @@
     </div>`;
   }
 
+  /** Метка «По ссылке: …» и кнопки для объектов не с сайта агентства (видит только сотрудник). */
+  function linkTools(o, { edit = true } = {}) {
+    if (o.source !== 'link') return '';
+    return `<span class="badge badge-warn" title="Добавлен по ссылке — клиент не видит источник">${esc(o.sourceName || 'по ссылке')}</span>
+      ${o.url ? `<a class="small" href="${esc(U.safeUrl(o.url))}" target="_blank" rel="noopener noreferrer" title="Открыть оригинал (видит только сотрудник)">Оригинал ↗</a>` : ''}
+      ${edit ? `<button class="btn btn-sm btn-light" data-act="edit-obj" data-id="${o.id}" title="Исправить данные объекта">✎ Изменить</button>` : ''}`;
+  }
+
   // ----- Конструктор -----
   function renderBuilder() {
     const f = state.filters;
@@ -233,7 +244,7 @@
       <div class="builder__catalog">
         <div class="card pad">
           <form class="url-add" data-form="url">
-            <input class="input" name="url" placeholder="Вставьте ссылку на объект с ${esc(new URL(state.meta.siteUrl).host)}" autocomplete="off">
+            <input class="input" name="url" placeholder="Ссылка на объект: ${esc(new URL(state.meta.siteUrl).host)}, сайт застройщика, ЦИАН, Авито…" autocomplete="off">
             <button class="btn btn-blue" type="submit">Добавить</button>
           </form>
         </div>
@@ -275,6 +286,7 @@
               <div class="chosen-item__body">
                 <div class="chosen-item__title">${esc(o.title)}</div>
                 <div class="muted small">${price(o.price)}</div>
+                ${o.source === 'link' ? `<div class="link-tools">${linkTools(o)}</div>` : ''}
                 <input class="input input-note" placeholder="Комментарий для клиента" value="${esc(o.note || '')}" data-note="${o.id}">
               </div>
               <div class="chosen-item__tools">
@@ -311,6 +323,7 @@
         <div class="obj__title" data-act="detail" data-id="${o.id}">${esc(o.title)}</div>
         <div class="obj__addr muted small">${esc(o.address || '')}</div>
         <div class="obj__specs small">${esc(shortSpecs(o))}</div>
+        ${o.source === 'link' ? `<div class="link-tools">${linkTools(o)}</div>` : ''}
         <div class="obj__foot">
           ${sentBadge}
           <button class="btn btn-sm ${added ? 'btn-light' : 'btn-primary'}" data-act="${added ? 'remove' : 'add'}" data-id="${o.id}">${added ? '✓ В подборке' : '+ Добавить'}</button>
@@ -350,6 +363,104 @@
         <button class="btn ${added ? 'btn-light' : 'btn-primary'}" data-act="${added ? 'remove' : 'add'}" data-id="${o.id}">${added ? '✓ В подборке' : '+ Добавить в подборку'}</button>
       </div>
     </div></div>`;
+  }
+
+  // ---------- Правка объекта, добавленного по ссылке ----------
+  function renderEditor() {
+    const { obj: o, warning, saving } = state.editor;
+    if (!o) return '<div class="modal"><div class="modal__box center"><span class="spinner"></span></div></div>';
+    const f = (name, label, value, attrs = '') => `<label class="ed-field"><span class="muted small">${label}</span><input class="input" name="${name}" value="${esc(value ?? '')}" data-ed ${attrs}></label>`;
+    const photos = o.photos || [];
+    return `<div class="modal"><div class="modal__box modal__box--wide" data-stop>
+      <button class="modal__close" data-act="close-editor">✕</button>
+      <h3>Объект по ссылке</h3>
+      <div class="muted small">${esc(o.sourceName || '')} · <a href="${esc(U.safeUrl(o.url))}" target="_blank" rel="noopener noreferrer">Оригинал ↗</a> · клиент не увидит источник и эту ссылку. Правки сохранятся для всех подборок.</div>
+      ${warning ? `<div class="alert">${esc(warning)}</div>` : ''}
+      <div class="ed-grid">
+        ${f('title', 'Заголовок', o.title, 'maxlength="200"')}
+        ${f('complex', 'ЖК', o.complex, 'maxlength="100"')}
+        ${f('address', 'Адрес', o.address, 'maxlength="300"')}
+        ${f('price', 'Цена, ₽', o.price, 'inputmode="numeric"')}
+        ${f('rooms', 'Комнат (0 — студия)', o.rooms, 'inputmode="numeric"')}
+        ${f('area_total', 'Общая площадь, м²', o.area_total, 'inputmode="decimal"')}
+        ${f('area_living', 'Жилая, м²', o.area_living, 'inputmode="decimal"')}
+        ${f('area_kitchen', 'Кухня, м²', o.area_kitchen, 'inputmode="decimal"')}
+        ${f('floor', 'Этаж', o.floor, 'inputmode="numeric"')}
+        ${f('floors', 'Этажей в доме', o.floors, 'inputmode="numeric"')}
+      </div>
+      <label class="ed-field"><span class="muted small">Описание для клиента (контакты продавцов и агентств уже удалены автоматически — проверьте)</span>
+        <textarea class="textarea" name="description" rows="6" data-ed>${esc(o.description || '')}</textarea></label>
+      <div class="ed-photos-head"><b>Фото (${photos.length})</b>
+        <label class="btn btn-light btn-sm">+ Загрузить фото<input type="file" accept="image/jpeg,image/png,image/webp" multiple hidden data-upload></label></div>
+      <div class="ed-photos">${photos.map((p, i) => `<div class="ed-photo">
+        <img src="${esc(p.small)}" alt="" loading="lazy" data-broken="hide">
+        <div class="ed-photo__tools">
+          <button class="btn btn-icon btn-light" data-act="ph-left" data-i="${i}" ${i === 0 ? 'disabled' : ''} title="Раньше">←</button>
+          <button class="btn btn-icon btn-light btn-danger-text" data-act="ph-del" data-i="${i}" title="Убрать фото">✕</button>
+          <button class="btn btn-icon btn-light" data-act="ph-right" data-i="${i}" ${i === photos.length - 1 ? 'disabled' : ''} title="Позже">→</button>
+        </div></div>`).join('') || '<div class="muted small">Фото нет — загрузите с компьютера или из галереи телефона.</div>'}</div>
+      <div class="modal__actions">
+        <button class="btn btn-light" data-act="close-editor">Отмена</button>
+        <button class="btn btn-primary" data-act="save-editor" ${saving ? 'disabled' : ''}>${saving ? 'Сохраняем…' : 'Сохранить'}</button>
+      </div>
+    </div></div>`;
+  }
+
+  async function openEditor(id, warning) {
+    state.editor = { obj: null, warning };
+    render();
+    try {
+      state.editor = { obj: await api('/catalog/object/' + id), warning };
+    } catch (e) { state.editor = null; toast(e.message); }
+    render();
+  }
+
+  function collectEditor() {
+    const o = state.editor.obj;
+    $app.querySelectorAll('[data-ed]').forEach((el) => { o[el.name] = el.value; });
+    return o;
+  }
+
+  /** Обновляет объект во всех местах интерфейса после правки. */
+  function applyObject(o) {
+    state.chosen = state.chosen.map((c) => (c.id === o.id ? { ...c, ...toChosen(o), note: c.note } : c));
+    state.results = state.results.map((r) => (r.id === o.id ? { ...r, ...o } : r));
+  }
+
+  async function saveEditor() {
+    const o = collectEditor();
+    state.editor.saving = true; render();
+    try {
+      const saved = await api('/objects/' + o.id, {
+        method: 'PATCH',
+        body: {
+          title: o.title, complex: o.complex, address: o.address, price: o.price, rooms: o.rooms, area_total: o.area_total,
+          area_living: o.area_living, area_kitchen: o.area_kitchen, floor: o.floor, floors: o.floors,
+          description: o.description, photos: (o.photos || []).map((p) => p.big),
+        },
+      });
+      applyObject(saved);
+      state.editor = null;
+      if (state.view === 'history') await loadHistory();
+      render();
+      toast('Сохранено — изменения видны во всех подборках');
+    } catch (e) { state.editor.saving = false; render(); toast(e.message); }
+  }
+
+  async function uploadPhotos(files) {
+    const o = collectEditor();
+    for (const file of files) {
+      if (!/^image\/(jpeg|png|webp)$/.test(file.type)) { toast('Пропущен файл ' + file.name + ': нужен JPG, PNG или WEBP'); continue; }
+      try {
+        const res = await fetch('/api/objects/' + o.id + '/photos', {
+          method: 'POST', headers: { Authorization: 'Bearer ' + BOOT.token, 'Content-Type': file.type }, body: file,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Ошибка ' + res.status);
+        o.photos = (o.photos || []).concat({ big: data.photo, small: data.photo });
+      } catch (e) { toast(e.message); }
+    }
+    render();
   }
 
   // ---------- Поиск ----------
@@ -398,7 +509,10 @@
 
   // ---------- Действия ----------
   function toChosen(o) {
-    return { id: o.id, title: o.title, address: o.address, price: o.price, thumb: o.thumb || o.photos?.[0]?.small, note: '' };
+    return {
+      id: o.id, title: o.title, address: o.address, price: o.price, thumb: o.thumb || o.photos?.[0]?.small, note: '',
+      source: o.source, sourceName: o.sourceName, url: o.url,
+    };
   }
 
   function findObject(id) {
@@ -520,12 +634,24 @@
       case 'close-detail': state.detail = null; render(); break;
       case 'close-created': state.created = null; render(); break;
       case 'create': createSelection(); break;
+      case 'edit-obj': e.preventDefault(); openEditor(id); break;
+      case 'close-editor': state.editor = null; render(); break;
+      case 'save-editor': saveEditor(); break;
+      case 'ph-left': case 'ph-right': case 'ph-del': {
+        const o = collectEditor();
+        const i = Number(el.dataset.i);
+        const ph = o.photos;
+        if (el.dataset.act === 'ph-del') ph.splice(i, 1);
+        else { const j = el.dataset.act === 'ph-left' ? i - 1 : i + 1; if (j >= 0 && j < ph.length) [ph[i], ph[j]] = [ph[j], ph[i]]; }
+        render(); break;
+      }
       default:
     }
   });
 
   $app.addEventListener('input', (e) => {
     const t = e.target;
+    if (t.hasAttribute('data-ed') && state.editor?.obj) { state.editor.obj[t.name] = t.value; return; }
     if (t.dataset.field) { state[t.dataset.field] = t.value; return; }
     if (t.dataset.note) { const c = state.chosen.find((x) => x.id === Number(t.dataset.note)); if (c) c.note = t.value; return; }
     if (t.hasAttribute('data-filter') && t.type !== 'checkbox' && t.tagName !== 'SELECT') {
@@ -536,6 +662,7 @@
 
   $app.addEventListener('change', (e) => {
     const t = e.target;
+    if (t.hasAttribute('data-upload')) { uploadPhotos([...t.files]); return; }
     if (!t.hasAttribute('data-filter')) return;
     if (t.type === 'checkbox') { state.filters[t.name] = t.checked; render(); return; }
     if (t.tagName === 'SELECT') { state.filters[t.name] = t.value; search(true); }
@@ -549,13 +676,18 @@
     const url = input.value.trim();
     if (!url) return;
     const btn = form.querySelector('button');
-    btn.disabled = true; btn.textContent = '…';
+    btn.disabled = true; btn.textContent = 'Читаем сайт…';
     try {
       const o = await api('/catalog/resolve', { method: 'POST', body: { url } });
       if (state.chosen.some((c) => c.id === o.id)) toast('Объект уже в подборке');
-      else { state.chosen.push(toChosen(o)); toast('Добавлено: ' + o.title); }
+      else {
+        state.chosen.push(toChosen(o));
+        toast(o.existed ? 'Объект уже был в базе — добавлен с прежними правками' : 'Добавлено: ' + o.title);
+      }
       input.value = '';
       render();
+      // по ссылке с другого сайта — сразу показать карточку для проверки (черновик — обязательно)
+      if (o.source === 'link' && !o.existed) openEditor(o.id, o.warning || 'Проверьте данные и фото — они взяты со страницы автоматически.');
     } catch (err) {
       toast(err.message);
       btn.disabled = false; btn.textContent = 'Добавить';
@@ -563,6 +695,7 @@
   });
 
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && state.editor && !state.editor.saving) { state.editor = null; render(); return; }
     if (e.key === 'Escape' && state.detail) { state.detail = null; render(); }
   });
 

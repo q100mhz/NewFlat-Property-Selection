@@ -126,3 +126,16 @@ body { padding: 0 0 24px; background: var(--bg); min-height: 400px; }
 .badge-live { background: var(--accent-soft); color: var(--accent); }
 .badge-live i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); display: inline-block; animation: live-pulse 1.4s ease-in-out infinite; }
 @keyframes live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+
+/* Объекты по ссылке */
+.link-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0; }
+.link-tools .btn-sm { height: 24px; padding: 0 10px; font-size: 11px; }
+.ed-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin: 14px 0; }
+.ed-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.ed-photos-head { display: flex; align-items: center; justify-content: space-between; margin: 6px 0 8px; }
+.ed-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.ed-photo { position: relative; border-radius: 8px; overflow: hidden; background: var(--surface-2); height: 110px; }
+.ed-photo img { width: 100%; height: 100%; object-fit: cover; }
+.ed-photo__tools { position: absolute; left: 0; right: 0; bottom: 4px; display: flex; justify-content: center; gap: 4px; }
+.ed-photo__tools .btn-icon { width: 26px; height: 26px; background: rgba(255,255,255,.92); }
+.alert { background: var(--warning-soft); color: #7a5300; border-radius: 8px; padding: 8px 12px; margin: 10px 0; font-size: 13px; }
