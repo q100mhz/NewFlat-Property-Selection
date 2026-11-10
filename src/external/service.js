@@ -144,6 +144,27 @@ function upsertRow(o) {
   `).run(o);
 }
 
+// ---------- Площадки, закрытые от автоматического чтения ----------
+
+/** Авито, ЦИАН и ДомКлик блокируют чтение страниц: не обращаемся к ним (чтобы не попасть под блокировку IP сервера). */
+const CLOSED_PLATFORMS = /(^|\.)(avito\.ru|cian\.ru|domclick\.ru)$/i;
+export const isClosedPlatform = (url) => { try { return CLOSED_PLATFORMS.test(new URL(url).hostname); } catch { return false; } };
+
+/** Что можно понять из самой ссылки (у Авито в адресе есть комнаты и площадь). */
+export function hintsFromUrl(url) {
+  const out = {};
+  let path = '';
+  try { path = decodeURIComponent(new URL(url).pathname).toLowerCase(); } catch { return out; }
+  const avito = path.match(/\/(?:(\d+)-k\._kvartira|(studiya|kvartira-studiya))[_.]*([\d,]+)_m/);
+  if (avito) {
+    out.rooms = avito[2] ? 0 : Number(avito[1]);
+    out.area_total = Number(String(avito[3]).replace(',', '.')) || null;
+  }
+  if (/sale__flat|\/sale\/flat|kvartiry/.test(path) && out.rooms == null) out.kind = 'квартира';
+  if (out.area_total) out.title = `${out.rooms === 0 ? 'Студия' : out.rooms ? `${out.rooms}-к квартира` : 'Квартира'}, ${String(out.area_total).replace('.', ',')} м²`;
+  return out;
+}
+
 // ---------- Добавление по ссылке ----------
 
 /**
@@ -159,7 +180,10 @@ export async function addByLink(input, session) {
   const id = existing?.id || nextId();
   let data = null;
   let reason = null;
-  try {
+  const hints = hintsFromUrl(url);
+  if (isClosedPlatform(url)) {
+    reason = `${sourceName(url)} закрывает объявления от автоматического чтения. Заполните карточку и загрузите фото (например, сохранённые с объявления).`;
+  } else try {
     const page = await safeFetch(url, { kind: 'page' });
     const html = page.body.toString('utf8');
     if (page.status >= 400 || BLOCK_PAGE.test(html.slice(0, 20000)) && html.length < 60000) {
@@ -180,13 +204,13 @@ export async function addByLink(input, session) {
   const src = sourceName(url, data?.siteName);
   const o = {
     id, url,
-    title: data?.title || `Объект с ${src}`,
+    title: data?.title || hints.title || `Объект с ${src}`,
     address: data?.address || null,
     price: data?.price || null,
-    rooms: data?.rooms ?? null,
+    rooms: data?.rooms ?? hints.rooms ?? null,
     floor: data?.floor || null,
     floors: data?.floors || null,
-    area_total: data?.area_total || null,
+    area_total: data?.area_total || hints.area_total || null,
     area_living: data?.area_living || null,
     area_kitchen: data?.area_kitchen || null,
     thumb: photos[0]?.small || null,

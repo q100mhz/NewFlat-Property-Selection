@@ -252,13 +252,19 @@ nginx -t && systemctl reload nginx
 
 В конструкторе подборки можно вставить ссылку на объект с любого сайта: застройщика, ЦИАН, Авито и т. д. Приложение прочитает страницу (цена, площадь, комнаты, этаж, ЖК, описание, фото без служебных картинок), скачает фото к себе (`data/photos/` в томе данных), уберёт из описания контакты чужих продавцов и откроет карточку на проверку. Если сайт закрыт защитой от роботов (Авито, ЦИАН, ДомКлик), создаётся черновик для ручного заполнения с загрузкой фото. Клиент не видит ни ссылки, ни названия источника.
 
-Если адрес для клиентов уже настроен, обновите его конфиг nginx (добавлен путь `/photo/`):
+Если адрес для клиентов уже настроен, добавьте в его конфиг nginx путь `/photo/` (команда ничего не делает, если путь уже есть):
 
 ```bash
-sed -i 's#location ~ ^/(s/|api/public/|img$|static/client/|static/shared/) {#location ~ ^/(s/|api/public/|img$|photo/|static/client/|static/shared/) {#' /etc/nginx/sites-available/newflat72.itb2bhost.ru.conf
-grep -n "location ~" /etc/nginx/sites-available/newflat72.itb2bhost.ru.conf
+F=/etc/nginx/sites-available/newflat72.itb2bhost.ru.conf
+cp "$F" "$F.bak"
+grep -q 'location /photo/' "$F" || sed -i 's#^\(\s*\)location / { return 404; }#\1location /photo/ { proxy_pass http://127.0.0.1:3200; proxy_set_header Host $host; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }\n\1location / { return 404; }#' "$F"
+grep -n "location" "$F"
 nginx -t && systemctl reload nginx
 ```
+
+Проверка: `curl -s https://newflat72.itb2bhost.ru/photo/1/x.jpg` должен ответить `Not found` (это уже приложение), а не HTML-страницей nginx.
+
+Авито, ЦИАН и ДомКлик закрывают объявления от автоматического чтения, поэтому сервер к ним не обращается: сразу открывается карточка для ручного заполнения (для Авито комнаты и площадь берутся из ссылки).
 
 ## Обновление приложения
 

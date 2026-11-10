@@ -91,3 +91,20 @@ test('правка объекта по ссылке видна во всех п�
   }
   assert.equal(svc.updateLinkObject(123, { title: 'x' }), null, 'объекты newflat не редактируются');
 });
+
+test('Авито/ЦИАН/ДомКлик: сервер к ним не обращается, данные из ссылки берутся', async () => {
+  assert.equal(svc.isClosedPlatform('https://www.avito.ru/omsk/kvartiry/x'), true);
+  assert.equal(svc.isClosedPlatform('https://omsk.cian.ru/sale/flat/1/'), true);
+  assert.equal(svc.isClosedPlatform('https://omsk.domclick.ru/card/sale__flat__1'), true);
+  assert.equal(svc.isClosedPlatform('https://tyumen.brusnika.ru/flat/1/'), false);
+  assert.deepEqual(svc.hintsFromUrl('https://www.avito.ru/omsk/kvartiry/2-k._kvartira_103_m_214_et._8607801309'),
+    { rooms: 2, area_total: 103, title: '2-к квартира, 103 м²' });
+  assert.equal(svc.hintsFromUrl('https://www.avito.ru/tyumen/kvartiry/kvartira-studiya_24,5_m_5_17_et._1').rooms, 0);
+  const t0 = Date.now();
+  const r = await svc.addByLink('https://www.avito.ru/omsk/kvartiry/2-k._kvartira_103_m_214_et._8607801309?context=abc', { userId: 1 });
+  assert.ok(Date.now() - t0 < 1000, 'карточка создаётся сразу, без обращения к Авито');
+  assert.match(r.warning, /Авито закрывает/);
+  const row = db.prepare('SELECT title, rooms, area_total, url FROM objects WHERE id = ?').get(r.id);
+  assert.equal(row.title, '2-к квартира, 103 м²');
+  assert.equal(row.url.includes('context='), false, 'метки отслеживания убраны из ссылки');
+});
