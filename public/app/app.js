@@ -127,7 +127,22 @@
   }
 
   function header(title, right) {
-    return `<div class="topbar"><div class="topbar__title">${title}</div><div class="topbar__actions">${right}</div></div>`;
+    // открыто с дашборда (мобильный Битрикс24) — возврат к списку подборок
+    const back = BOOT.fromDashboard ? '<button class="btn btn-light btn-sm" data-act="back-dashboard">← Назад</button>' : '';
+    return `<div class="topbar"><div class="topbar__title">${back}${title}</div><div class="topbar__actions">${right}</div></div>`;
+  }
+
+  /** Кнопки отправки ссылки клиенту: WhatsApp и СМС — сразу на номер клиента из CRM, если он есть. */
+  function shareButtons(sel) {
+    const text = `${sel.message ? sel.message.trim() + '\n\n' : 'Здравствуйте! Подобрали для вас варианты — посмотрите и отметьте, что нравится:\n'}${sel.link}`;
+    const enc = encodeURIComponent(text);
+    const phone = BOOT.clientPhone;
+    return `<div class="share">
+      <a class="btn btn-sm share__wa" href="${phone ? `https://wa.me/${phone}?text=${enc}` : `https://wa.me/?text=${enc}`}" target="_blank" rel="noopener noreferrer">WhatsApp${phone ? ' клиенту' : ''}</a>
+      <a class="btn btn-sm share__tg" href="https://t.me/share/url?url=${encodeURIComponent(sel.link)}&text=${encodeURIComponent(sel.message || 'Подборка объектов для вас')}" target="_blank" rel="noopener noreferrer">Telegram</a>
+      <a class="btn btn-sm btn-light" href="sms:${phone ? '+' + phone : ''}?&body=${enc}">СМС</a>
+      ${navigator.share ? `<button class="btn btn-sm btn-light" data-act="native-share" data-id="${sel.id}">Ещё…</button>` : ''}
+    </div>`;
   }
 
   function renderHistory() {
@@ -147,7 +162,7 @@
         body += `<div class="center"><button class="btn btn-light btn-sm" data-act="toggle-archived">${state.showArchived ? 'Скрыть архив' : `Показать архив (${archivedCount})`}</button></div>`;
       }
     }
-    return header(`Подборки ${BOOT.entityType === 'deal' ? 'по сделке' : 'по лиду'}`,
+    return header(BOOT.fromDashboard && BOOT.entityTitle ? `Подборки: ${esc(BOOT.entityTitle)}` : `Подборки ${BOOT.entityType === 'deal' ? 'по сделке' : 'по лиду'}`,
       state.selections.length ? '<button class="btn btn-primary" data-act="new">+ Новая подборка</button>' : '') + body;
   }
 
@@ -202,6 +217,7 @@
         <button class="btn btn-blue btn-sm" data-act="copy" data-link="${esc(s.link)}">Копировать</button>
         <a class="btn btn-light btn-sm" href="${esc(U.safeUrl(s.link))}" target="_blank" rel="noopener noreferrer">Открыть</a>
       </div>
+      ${s.archived ? '' : `<div class="sel__share">${shareButtons(s)}</div>`}
       ${open ? `<div class="sel__items">
         ${s.message ? `<div class="sel__message muted small">Сообщение клиенту: «${esc(s.message)}»</div>` : ''}
         ${s.items.map((i) => `<div class="sel-item">
@@ -337,7 +353,8 @@
     return `<div class="modal"><div class="modal__box">
       <div class="modal__icon">✓</div>
       <h3>Подборка создана</h3>
-      <p class="muted">Отправьте ссылку клиенту в мессенджер или по почте. Оценки клиента появятся во вкладке и в таймлайне карточки.</p>
+      <p class="muted">Отправьте ссылку клиенту. Оценки клиента появятся во вкладке и в таймлайне карточки.</p>
+      ${shareButtons(s)}
       <div class="sel__link"><input class="input input-link" readonly value="${esc(s.link)}">
         <button class="btn btn-blue btn-sm" data-act="copy" data-link="${esc(s.link)}">Копировать</button></div>
       ${s.timeline === true ? '<p class="small muted">✓ Ссылка добавлена в таймлайн карточки</p>' : s.timeline === false && hasBX() ? '<p class="small warn">Не удалось добавить комментарий в таймлайн</p>' : ''}
@@ -634,6 +651,18 @@
       case 'close-detail': state.detail = null; render(); break;
       case 'close-created': state.created = null; render(); break;
       case 'create': createSelection(); break;
+      case 'back-dashboard': {
+        const f = document.createElement('form');
+        f.method = 'post'; f.action = '/b24/home'; f.style.display = 'none';
+        const i = document.createElement('input'); i.type = 'hidden'; i.name = 'session'; i.value = BOOT.dashToken || '';
+        f.appendChild(i); document.body.appendChild(f); f.submit();
+        break;
+      }
+      case 'native-share': {
+        const sel = state.created?.id === id ? state.created : state.selections.find((x) => x.id === id);
+        if (sel) navigator.share({ title: sel.title || 'Подборка', text: sel.message || 'Подборка объектов для вас', url: sel.link }).catch(() => {});
+        break;
+      }
       case 'edit-obj': e.preventDefault(); openEditor(id); break;
       case 'close-editor': state.editor = null; render(); break;
       case 'save-editor': saveEditor(); break;

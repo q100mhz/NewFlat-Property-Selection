@@ -223,3 +223,15 @@ test('удаление: только из архива и только авто�
   assert.equal(m.sel.deleteSelection({ ...other, isAdmin: true }, id), 'ok');
   assert.equal(db.prepare('SELECT COUNT(*) n FROM selection_items WHERE selection_id = ?').get(id).n, 0, 'объекты удалены каскадом');
 });
+
+test('лиды: номера телефонов и права на лид', async () => {
+  const { phoneVariants, waPhone, canSeeLead } = await import('../src/leads.js');
+  assert.deepEqual(phoneVariants('8 (912) 345-67-89').sort(), ['+79123456789', '79123456789', '89123456789', '9123456789'].sort());
+  assert.deepEqual(phoneVariants('12'), []);
+  assert.equal(waPhone('+7 (912) 345-67-89'), '79123456789');
+  assert.equal(waPhone('9123456789'), '79123456789');
+  assert.equal(waPhone('123'), null);
+  assert.equal(canSeeLead({ all: true }, { ASSIGNED_BY_ID: '5' }), true);
+  assert.equal(canSeeLead({ all: false, userIds: [7] }, { ASSIGNED_BY_ID: '7' }), true);
+  assert.equal(canSeeLead({ all: false, userIds: [7] }, { ASSIGNED_BY_ID: '8' }), false);
+});

@@ -40,7 +40,7 @@ export class FetchBlocked extends Error {
   constructor(msg) { super(msg); this.code = 'BLOCKED'; }
 }
 
-function safeLookup(hostname, opts, cb) {
+export function safeLookup(hostname, opts, cb) {
   dns.lookup(hostname, { all: true }, (err, addrs) => {
     if (err) return cb(err);
     const bad = addrs.find((a) => isBlockedIp(a.address));

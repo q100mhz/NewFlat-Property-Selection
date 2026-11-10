@@ -139,3 +139,18 @@ body { padding: 0 0 24px; background: var(--bg); min-height: 400px; }
 .ed-photo__tools { position: absolute; left: 0; right: 0; bottom: 4px; display: flex; justify-content: center; gap: 4px; }
 .ed-photo__tools .btn-icon { width: 26px; height: 26px; background: rgba(255,255,255,.92); }
 .alert { background: var(--warning-soft); color: #7a5300; border-radius: 8px; padding: 8px 12px; margin: 10px 0; font-size: 13px; }
+
+/* Отправка клиенту */
+.share { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.share .btn { text-decoration: none; }
+.share__wa { background: #25d366; color: #fff; }
+.share__wa:hover { background: #1fbd5a; }
+.share__tg { background: #2aabee; color: #fff; }
+.share__tg:hover { background: #1e9bd9; }
+.sel__share { padding: 0 16px 12px; }
+.sel__share .share { margin: 0; }
+.topbar__title .btn { margin-right: 10px; vertical-align: middle; }
+@media (max-width: 560px) {
+  .share .btn { flex: 1 1 calc(50% - 8px); height: 40px; font-size: 14px; }
+  .topbar__title { font-size: 17px; }
+}

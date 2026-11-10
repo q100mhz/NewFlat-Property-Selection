@@ -40,7 +40,7 @@ export function b24Csp(nonce) {
     "connect-src 'self'",
     `frame-ancestors ${portalOrigins()}`,
     "base-uri 'none'",
-    "form-action 'none'",
+    "form-action 'self'", // переход с дашборда в конструктор выбранного лида
   ].join('; ');
 }
 

@@ -10,7 +10,8 @@ import { resolveScope, getOrgStructure, getFullAccess, setFullAccess } from './a
 import { queryDashboard, dashboardUsers } from './dashboard.js';
 import { getRules, getLeadStages, saveRules } from './automation.js';
 import { addByLink, updateLinkObject, addUploadedPhoto, photoPath } from './external/service.js';
-import { createSession, requireSession, escapeHtml } from './session.js';
+import { createSession, requireSession, readSession, escapeHtml } from './session.js';
+import { searchLeads, getLeadForSession, firstPhone } from './leads.js';
 import {
   baseHeaders, b24Csp, clientCsp, newNonce, inlineAssets, rateLimit, guardEnumeration, notFound, isExternal,
 } from './security.js';
@@ -220,18 +221,63 @@ app.post('/b24/placement', b24Limit, asyncH(async (req, res) => {
     throw new AccessError(`[auth] нет доступа к ${entityType} ${entityId} у пользователя ${base.userId}: ${e.message}`);
   }
   const leadId = entityType === 'deal' && Number(entity.LEAD_ID) ? Number(entity.LEAD_ID) : null;
+  // телефон клиента для кнопок «Отправить в WhatsApp / СМС»
+  let clientPhone = firstPhone(entity);
+  if (!clientPhone && Number(entity.CONTACT_ID)) {
+    try { clientPhone = firstPhone((await callWithToken(portal.domain, 'crm.contact.get', { id: Number(entity.CONTACT_ID) }, accessToken)).result); } catch { /* нет доступа к контакту */ }
+  }
 
   const session = { ...base, entityType, entityId, leadId };
   sendB24Page(res, 'app/index.html', {
     token: createSession(session),
     entityType, entityId, leadId,
     entityTitle: entity.TITLE || '',
+    clientPhone,
     user: { id: base.userId, name: base.userName },
     portalDomain: portal.domain,
     inBitrix: true,
     timezone: config.timezone,
   });
 }));
+
+// Конструктор для лида, выбранного на дашборде (мобильный Битрикс24: вкладок в карточке там нет).
+// Форма POST с сессией дашборда — ключ не попадает в адрес страницы.
+app.post('/b24/entity', b24Limit, asyncH(async (req, res) => {
+  const s = readSession(req.body?.session);
+  const leadId = Number(req.body?.leadId);
+  if (!s || !leadId) return notFound(req, res);
+  const lead = await getLeadForSession(s, leadId);
+  if (!lead) throw new AccessError(`[auth] лид ${leadId} вне зоны видимости пользователя ${s.userId}`);
+  const portal = getPortal(s.memberId);
+  const session = {
+    memberId: s.memberId, userId: s.userId, userName: s.userName, isAdmin: s.isAdmin, isAppAdmin: s.isAppAdmin,
+    entityType: 'lead', entityId: leadId, leadId: null,
+  };
+  sendB24Page(res, 'app/index.html', {
+    token: createSession(session),
+    entityType: 'lead', entityId: leadId, leadId: null,
+    entityTitle: lead.TITLE || [lead.NAME, lead.LAST_NAME].filter(Boolean).join(' '),
+    clientPhone: firstPhone(lead),
+    user: { id: s.userId, name: s.userName },
+    portalDomain: portal?.domain || '', inBitrix: true, timezone: config.timezone,
+    fromDashboard: true,
+    dashToken: req.body.session, // для возврата на дашборд без повторного входа
+  });
+}));
+
+// Возврат из конструктора на дашборд (без истории браузера: в мобильном Битрикс24 она ненадёжна)
+app.post('/b24/home', b24Limit, (req, res) => {
+  const s = readSession(req.body?.session);
+  if (!s) return notFound(req, res);
+  const portal = getPortal(s.memberId);
+  sendB24Page(res, 'app/dashboard.html', {
+    token: req.body.session,
+    user: { id: s.userId, name: s.userName, isAdmin: s.isAdmin },
+    portalDomain: portal?.domain || '', inBitrix: true, timezone: config.timezone,
+    stats: catalogStats(),
+    sections: CATALOG_SECTIONS.map((x) => ({ category: x.category, label: x.label })),
+  });
+});
 
 // Главная страница приложения (пункт в меню «Приложения»)
 app.post('/b24/handler', b24Limit, asyncH(async (req, res) => {
@@ -376,6 +422,10 @@ const ROLE_LABELS = {
   head: 'Руководитель — ваши подборки и подборки сотрудников подразделения',
   employee: 'Ваши подборки',
 };
+
+api.get('/leads', rateLimit('leads', 120, 60e3), asyncH(async (req, res) => {
+  res.json({ items: await searchLeads(req.session, req.query.q) });
+}));
 
 api.get('/dashboard', asyncH(async (req, res) => {
   const s = req.session;

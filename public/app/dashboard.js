@@ -15,6 +15,7 @@
     data: null, page: 1, loading: false, error: null,
     access: null,
     stageRules: null,           // { rules, stages, error }
+    picker: null,               // выбор лида для новой подборки: { q, items, loading, error }
   };
 
   async function api(path, opts = {}) {
@@ -73,6 +74,7 @@
 
     let html = `<div class="dash-head">
       <h1>Подборки объектов</h1>
+      <button class="btn btn-primary" data-act="new-selection">+ Новая подборка</button>
       ${d ? `<span class="scope-chip">Доступ: <b>${esc(d.scope.label)}</b>${d.scope.role === 'head' && d.scope.people ? ` · ${d.scope.people} ${plural(d.scope.people, 'сотрудник', 'сотрудника', 'сотрудников')}` : ''}</span>` : ''}
     </div>`;
     if (d?.scope.warning) html += `<div class="alert">${esc(d.scope.warning)}</div>`;
@@ -96,7 +98,7 @@
 
     if (!d) {
       html += state.loading ? '<div class="loading"><span class="spinner"></span></div>' : '';
-      $app.innerHTML = html; fit(); return;
+      $app.innerHTML = html + renderPicker(); fit(); return;
     }
 
     const k = d.kpi;
@@ -130,12 +132,59 @@
 
     if (BOOT.user?.isAdmin) html += renderAdmin(d);
 
-    $app.innerHTML = html;
+    $app.innerHTML = html + renderPicker();
     if (focus) {
       const el = $app.querySelector(`[name="${focus.name}"]`);
       if (el) { el.focus(); try { el.setSelectionRange(focus.s, focus.e); } catch (e) { /* select/date */ } }
     }
     fit();
+  }
+
+  // ---------- Новая подборка: выбор лида ----------
+  function renderPicker() {
+    const p = state.picker;
+    if (!p) return '';
+    const list = p.loading && !p.items ? '<div class="center"><span class="spinner"></span></div>'
+      : p.error ? `<div class="alert">${esc(p.error)}</div>`
+        : (p.items || []).length ? p.items.map((l) => `<button class="lead-row" data-lead="${l.id}">
+            <span class="lead-row__title">${esc(l.title)}</span>
+            <span class="lead-row__meta">${[l.name, l.phone ? '+' + l.phone : '', l.stage, '#' + l.id].filter(Boolean).map(esc).join(' · ')}</span>
+          </button>`).join('')
+          : `<div class="muted small center">${p.q ? 'Ничего не найдено. Проверьте номер или имя.' : 'Нет лидов в работе.'}</div>`;
+    return `<div class="modal"><div class="modal__box">
+      <button class="modal__close" data-act="close-picker">✕</button>
+      <h3>Для какого лида подборка?</h3>
+      <input class="input picker-q" name="pickerQ" type="search" inputmode="search" placeholder="Телефон, имя или номер лида" value="${esc(p.q || '')}" autocomplete="off">
+      <div class="muted small picker-hint">${p.q ? 'Результаты поиска' : 'Недавние лиды в работе'}</div>
+      <div class="lead-list">${list}</div>
+    </div></div>`;
+  }
+
+  let pickerSeq = 0;
+  async function loadLeads() {
+    const my = ++pickerSeq;
+    state.picker.loading = true;
+    try {
+      const r = await api('/leads?q=' + encodeURIComponent(state.picker.q || ''));
+      if (my !== pickerSeq || !state.picker) return;
+      state.picker.items = r.items; state.picker.error = null;
+    } catch (e) {
+      if (state.picker) state.picker.error = e.message;
+    } finally {
+      if (my === pickerSeq && state.picker) { state.picker.loading = false; render(); }
+    }
+  }
+  const loadLeadsDebounced = debounce(loadLeads, 400);
+
+  /** Переход в конструктор подборки для лида: POST-формой, без ключа в адресе страницы. */
+  function openLead(leadId) {
+    const f = document.createElement('form');
+    f.method = 'post'; f.action = '/b24/entity'; f.style.display = 'none';
+    for (const [k, v] of Object.entries({ session: BOOT.token, leadId })) {
+      const i = document.createElement('input'); i.type = 'hidden'; i.name = k; i.value = v; f.appendChild(i);
+    }
+    document.body.appendChild(f);
+    f.submit();
   }
 
   function status(r) {
@@ -261,6 +310,16 @@
 
   // ---------- События ----------
   $app.addEventListener('click', async (e) => {
+    const lead = e.target.closest('[data-lead]');
+    if (lead) { lead.disabled = true; openLead(Number(lead.dataset.lead)); return; }
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'new-selection') {
+      state.picker = { q: '', items: null, loading: true };
+      render(); loadLeads();
+      setTimeout(() => $app.querySelector('.picker-q')?.focus(), 50);
+      return;
+    }
+    if (act === 'close-picker') { state.picker = null; render(); return; }
     const p = e.target.closest('[data-period]');
     if (p) { state.filters.period = p.dataset.period; saveFilters(); load(true); return; }
     const u = e.target.closest('[data-user]');
@@ -280,6 +339,7 @@
 
   $app.addEventListener('input', (e) => {
     const t = e.target;
+    if (t.name === 'pickerQ' && state.picker) { state.picker.q = t.value; loadLeadsDebounced(); return; }
     if (!t.hasAttribute('data-f') || t.type === 'checkbox' || t.tagName === 'SELECT' || t.type === 'date') return;
     state.filters[t.name] = t.value; saveFilters(); loadDebounced();
   });

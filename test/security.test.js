@@ -26,6 +26,7 @@ before(async () => {
     b24.calls.push(u);
     if (u.endsWith('/app.info.json')) return new Response(JSON.stringify({ result: { CODE: 'local.test.1' } }));
     if (u.endsWith('/user.current.json')) return new Response(JSON.stringify({ result: { ID: '7', NAME: 'Иван', ADMIN: b24.admin } }));
+    if (u.endsWith('/crm.lead.get.json')) return new Response(JSON.stringify({ result: { ID: '55', TITLE: 'Чужой лид', ASSIGNED_BY_ID: '99' } }));
     return new Response(JSON.stringify({ result: true }));
   };
   server = http.createServer(app);
@@ -142,4 +143,14 @@ test('BB-коды из данных не становятся разметкой
   assert.equal(bb('Квартира [URL=http://evil]тут[/URL]'), 'Квартира (URL=http://evil)тут(/URL)');
   assert.equal(bbUrl('javascript:alert(1)'), '');
   assert.equal(bbUrl('https://newflat72.ru/x/]evil'), '');
+});
+
+test('конструктор для лида с дашборда: без сессии — «не найдено», чужой лид — отказ', async () => {
+  const { createSession } = await import('../src/session.js');
+  assert.equal((await req('POST', '/b24/entity', { body: { leadId: '55' } })).status, 404);
+  assert.equal((await req('POST', '/b24/entity', { body: { session: 'подделка', leadId: '55' } })).status, 404);
+  const session = createSession({ memberId: 'mem1', userId: 7, userName: 'Иван', isAdmin: false, entityType: null, entityId: null });
+  const r = await req('POST', '/b24/entity', { body: { session, leadId: '55' } });
+  assert.equal(r.status, 403, 'лид другого сотрудника не открывается');
+  assert.doesNotMatch(r.text, /Чужой лид/);
 });

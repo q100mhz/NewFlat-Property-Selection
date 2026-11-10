@@ -26,8 +26,9 @@ test('SSRF: внутренние адреса и опасные ссылки з�
   for (const u of ['http://localhost:3200/health', 'http://127.0.0.1/', 'http://[::1]/', 'ftp://example.com/', 'http://user:pw@example.com/', 'http://example.com:3200/', 'javascript:alert(1)']) {
     assert.throws(() => fx.checkUrl(u), fx.FetchBlocked, u);
   }
-  // имя, которое указывает на внутренний адрес, отсекается при подключении
-  await assert.rejects(() => fx.safeFetch('http://127.0.0.1.nip.io/'), (e) => e instanceof fx.FetchBlocked || /недоступен|ENOTFOUND|EAI_AGAIN/.test(e.message + (e.cause?.message || '')));
+  // имя, которое указывает на внутренний адрес, отсекается при подключении (проверка без внешнего DNS)
+  const err = await new Promise((resolve) => fx.safeLookup('localhost', { all: true }, (e) => resolve(e)));
+  assert.ok(err instanceof fx.FetchBlocked, 'localhost → 127.0.0.1 запрещён на этапе подключения');
   await assert.rejects(() => svc.addByLink('http://127.0.0.1:3200/health', { userId: 1 }), /недоступен|Некорректная|порт/);
 });
 
