@@ -29,6 +29,7 @@
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
     const data = await res.json().catch(() => ({}));
+    if (res.status === 401) throw new Error('Сессия истекла — обновите страницу');
     if (!res.ok) throw new Error(data.error || 'Ошибка ' + res.status);
     return data;
   }
@@ -41,8 +42,8 @@
 
   function addTimelineComment(sel) {
     if (!hasBX()) return Promise.resolve(false);
-    const list = sel.items.map((i, n) => `${n + 1}. [URL=${i.object.url}]${i.object.title}[/URL] — ${price(i.object.price)}`).join('\n');
-    const comment = `[B]Отправлена подборка «${sel.title || 'Подборка №' + sel.id}»[/B] (${sel.items.length} ${plural(sel.items.length, 'объект', 'объекта', 'объектов')})\n` +
+    const list = sel.items.map((i, n) => `${n + 1}. [URL=${U.safeUrl(i.object.url)}]${U.bb(i.object.title)}[/URL] — ${price(i.object.price)}`).join('\n');
+    const comment = `[B]Отправлена подборка «${U.bb(sel.title || 'Подборка №' + sel.id)}»[/B] (${sel.items.length} ${plural(sel.items.length, 'объект', 'объекта', 'объектов')})\n` +
       `Ссылка для клиента: [URL=${sel.link}]${sel.link}[/URL]\n\n${list}`;
     return new Promise((resolve) => {
       BX24.callMethod('crm.timeline.comment.add', {
@@ -197,14 +198,14 @@
       <div class="sel__link">
         <input class="input input-link" readonly value="${esc(s.link)}">
         <button class="btn btn-blue btn-sm" data-act="copy" data-link="${esc(s.link)}">Копировать</button>
-        <a class="btn btn-light btn-sm" href="${esc(s.link)}" target="_blank" rel="noopener">Открыть</a>
+        <a class="btn btn-light btn-sm" href="${esc(U.safeUrl(s.link))}" target="_blank" rel="noopener noreferrer">Открыть</a>
       </div>
       ${open ? `<div class="sel__items">
         ${s.message ? `<div class="sel__message muted small">Сообщение клиенту: «${esc(s.message)}»</div>` : ''}
         ${s.items.map((i) => `<div class="sel-item">
-          <img class="sel-item__img" src="${esc(i.object.thumb || '')}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+          <img class="sel-item__img" src="${esc(i.object.thumb || '')}" alt="" loading="lazy" data-broken="hide">
           <div class="sel-item__body">
-            <a class="sel-item__title" href="${esc(i.object.url)}" target="_blank" rel="noopener">${esc(i.object.title)}</a>
+            <a class="sel-item__title" href="${esc(U.safeUrl(i.object.url))}" target="_blank" rel="noopener noreferrer">${esc(i.object.title)}</a>
             <div class="muted small">${esc(i.object.address || '')}</div>
             <div class="small"><b>${price(i.object.price)}</b>${i.currentPrice && i.currentPrice !== i.object.price ? ` <span class="badge badge-warn">сейчас ${price(i.currentPrice)}</span>` : ''}${i.removed ? ' <span class="badge badge-dislike">снят с сайта</span>' : ''}</div>
             ${i.reasons?.length ? `<div class="small reasons">Причины: ${i.reasons.map(esc).join(', ')}</div>` : ''}
@@ -270,7 +271,7 @@
           <textarea class="textarea" name="message" rows="3" placeholder="Сообщение клиенту, например: «Здравствуйте! Подобрал варианты по вашему запросу — отметьте, что нравится»" data-field="message">${esc(state.message)}</textarea>
           <div class="chosen__list">
             ${state.chosen.length ? state.chosen.map((o, i) => `<div class="chosen-item">
-              <img src="${esc(o.thumb || '')}" alt="" onerror="this.style.visibility='hidden'">
+              <img src="${esc(o.thumb || '')}" alt="" data-broken="hide">
               <div class="chosen-item__body">
                 <div class="chosen-item__title">${esc(o.title)}</div>
                 <div class="muted small">${price(o.price)}</div>
@@ -341,11 +342,11 @@
       <h3>${esc(o.title)}</h3>
       <div class="muted">${esc(o.address || '')}</div>
       <div class="detail__price">${price(o.price)} ${o.price_per_m2 ? `<span class="muted small">${esc(o.price_per_m2)}</span>` : ''}</div>
-      <div class="detail__photos">${(o.photos || []).map((p) => `<a href="${esc(p.big)}" target="_blank" rel="noopener"><img src="${esc(p.small)}" alt="" loading="lazy"></a>`).join('')}</div>
+      <div class="detail__photos">${(o.photos || []).map((p) => `<a href="${esc(U.safeUrl(p.big))}" target="_blank" rel="noopener noreferrer"><img src="${esc(p.small)}" alt="" loading="lazy"></a>`).join('')}</div>
       ${props.length ? `<dl class="props">${props.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>` : ''}
       ${o.description ? `<div class="detail__descr">${esc(o.description)}</div>` : ''}
       <div class="modal__actions">
-        <a class="btn btn-light" href="${esc(o.url)}" target="_blank" rel="noopener">На сайте</a>
+        <a class="btn btn-light" href="${esc(U.safeUrl(o.url))}" target="_blank" rel="noopener noreferrer">На сайте</a>
         <button class="btn ${added ? 'btn-light' : 'btn-primary'}" data-act="${added ? 'remove' : 'add'}" data-id="${o.id}">${added ? '✓ В подборке' : '+ Добавить в подборку'}</button>
       </div>
     </div></div>`;

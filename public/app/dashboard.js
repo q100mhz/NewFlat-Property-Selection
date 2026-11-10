@@ -24,6 +24,7 @@
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
     const data = await res.json().catch(() => ({}));
+    if (res.status === 401) throw new Error('Сессия истекла — обновите страницу');
     if (!res.ok) throw new Error(data.error || 'Ошибка ' + res.status);
     return data;
   }
@@ -149,8 +150,8 @@
   function row(r) {
     const entity = `${r.entityType === 'lead' ? 'Лид' : 'Сделка'} #${r.entityId}`;
     return `<tr>
-      <td class="wrap">${esc(r.title || 'Подборка №' + r.id)}<a class="muted-link" href="${esc(r.link)}" target="_blank" rel="noopener" title="Открыть страницу клиента">↗</a>${r.archived ? ' <span class="badge">архив</span>' : ''}</td>
-      <td>${r.entityUrl ? `<a href="${esc(r.entityUrl)}" target="_top">${entity}</a>` : entity}</td>
+      <td class="wrap">${esc(r.title || 'Подборка №' + r.id)}<a class="muted-link" href="${esc(U.safeUrl(r.link))}" target="_blank" rel="noopener noreferrer" title="Открыть страницу клиента">↗</a>${r.archived ? ' <span class="badge">архив</span>' : ''}</td>
+      <td>${r.entityUrl ? `<a href="${esc(U.safeUrl(r.entityUrl))}" target="_top">${entity}</a>` : entity}</td>
       <td>${esc(r.createdByName || '—')}</td>
       <td>${esc(dateTime(r.createdAt))}</td>
       <td class="num">${r.total}</td>

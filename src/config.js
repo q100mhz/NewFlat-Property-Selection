@@ -85,5 +85,6 @@ export function assertProductionConfig() {
   if (!config.sessionSecret || config.sessionSecret.length < 32) problems.push('SESSION_SECRET (минимум 32 символа)');
   if (!config.b24ClientId) problems.push('B24_CLIENT_ID');
   if (!config.b24ClientSecret) problems.push('B24_CLIENT_SECRET');
+  if (!config.b24AllowedDomains.length) problems.push('B24_ALLOWED_DOMAINS (домен портала, например newflat.bitrix24.ru)');
   return problems;
 }

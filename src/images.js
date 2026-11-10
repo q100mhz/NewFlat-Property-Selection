@@ -51,19 +51,31 @@ async function download(u, file) {
   throw lastErr;
 }
 
-/** Удаляет из кэша фото, которые не обновлялись дольше 30 дней (кэш не растёт бесконечно). */
+const MAX_CACHE_BYTES = Number(process.env.IMG_CACHE_MAX_MB || 3000) * 1024 * 1024;
+
+/**
+ * Чистка кэша фото: удаляются файлы старше 30 дней, а если кэш превысил лимит
+ * (по умолчанию 3 ГБ) — самые давние, пока размер не станет меньше лимита.
+ */
 function cleanupCache() {
   const limit = Date.now() - 30 * 24 * 3600e3;
   let removed = 0;
+  const files = [];
   for (const name of fs.readdirSync(CACHE_DIR)) {
     const file = path.join(CACHE_DIR, name);
     try {
-      if (fs.statSync(file).mtimeMs < limit) { fs.unlinkSync(file); removed++; }
+      const st = fs.statSync(file);
+      if (st.mtimeMs < limit) { fs.unlinkSync(file); removed++; } else files.push({ file, size: st.size, t: st.mtimeMs });
     } catch { /* файл уже удалён */ }
+  }
+  let total = files.reduce((a, f) => a + f.size, 0);
+  for (const f of files.sort((a, b) => a.t - b.t)) {
+    if (total <= MAX_CACHE_BYTES) break;
+    try { fs.unlinkSync(f.file); total -= f.size; removed++; } catch { /* ignore */ }
   }
   if (removed) console.log(`[img-cache] удалено устаревших файлов: ${removed}`);
 }
-setInterval(cleanupCache, 24 * 3600e3).unref();
+setInterval(cleanupCache, 6 * 3600e3).unref();
 
 /** Подменяет ссылки на фото в объекте. */
 export function proxyObject(o) {

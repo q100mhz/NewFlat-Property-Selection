@@ -1,6 +1,6 @@
 import { db } from './db.js';
 import { config, DISLIKE_REASONS } from './config.js';
-import { newPublicToken } from './session.js';
+import { newPublicToken, bb, bbUrl } from './session.js';
 import { getObjectDetail, getObjectRow } from './catalog/catalog.js';
 import { callAsApp, getPortal } from './bitrix.js';
 import { proxyObject } from './images.js';
@@ -280,7 +280,7 @@ export function scheduleDigests() {
 }
 
 function selectionName(s) {
-  return s.title || `Подборка №${s.id}`;
+  return bb(s.title || `Подборка №${s.id}`);
 }
 
 function entityLink(s) {
@@ -303,10 +303,10 @@ export function buildFeedbackComment(s, items) {
     lines.push(`[B]${title} (${list.length}):[/B]`);
     for (const i of list) {
       const o = i.object;
-      let line = `• [URL=${o.url}]${o.title}[/URL] — ${fmtPrice(o.price)}`;
+      let line = `• ${bbUrl(o.url) ? `[URL=${bbUrl(o.url)}]${bb(o.title)}[/URL]` : bb(o.title)} — ${fmtPrice(o.price)}`;
       if (i.wantViewing) line += ' — [B]хочет на просмотр[/B]';
-      if (i.reasons?.length) line += ` — причины: ${i.reasons.join(', ')}`;
-      if (i.clientComment) line += `\n   «${i.clientComment.replace(/\[/g, '(').replace(/\]/g, ')')}»`;
+      if (i.reasons?.length) line += ` — причины: ${bb(i.reasons.join(', '))}`;
+      if (i.clientComment) line += `\n   «${bb(i.clientComment)}»`;
       lines.push(line);
     }
     lines.push('');

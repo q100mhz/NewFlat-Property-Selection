@@ -65,5 +65,19 @@
     return many;
   };
 
-  window.U = { esc, price, roomsLabel, dateTime, dateOnly, shortSpecs, toast, copyText, debounce, plural };
+  /** Только http(s)-ссылки: защита от javascript: и прочих схем в данных. */
+  const safeUrl = (u) => (/^https?:\/\//i.test(String(u || '')) || /^\/(?!\/)/.test(String(u || '')) ? u : '#');
+
+  /** Текст для BB-кодов Битрикс24: квадратные скобки из данных не должны становиться разметкой. */
+  const bb = (s) => String(s ?? '').replace(/\[/g, '(').replace(/\]/g, ')');
+
+  // битые картинки: <img data-broken="hide|remove"> (вместо onerror, который запрещает CSP)
+  document.addEventListener('error', (e) => {
+    const t = e.target;
+    if (t && t.tagName === 'IMG' && t.dataset.broken) {
+      if (t.dataset.broken === 'remove') t.remove(); else t.style.visibility = 'hidden';
+    }
+  }, true);
+
+  window.U = { esc, price, roomsLabel, dateTime, dateOnly, shortSpecs, toast, copyText, debounce, plural, safeUrl, bb };
 })();

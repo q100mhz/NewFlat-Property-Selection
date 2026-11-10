@@ -18,6 +18,7 @@ import { config } from './config.js';
 import { callAsApp } from './bitrix.js';
 import { emitSelectionChange } from './events.js';
 import { localMidnightUtc, localYmd, localHour } from './time.js';
+import { bb } from './session.js';
 
 const DEFAULT_NAMES = { discussion: 'Обсуждение вариантов', viewing: 'Показ', rejected: 'Готовлю подбор' };
 const STAGES_CACHE_MS = 10 * 60e3;
@@ -143,7 +144,7 @@ export async function checkSelection(selectionId, { evaluate = false, items = []
   let stageName = target;
   try { stageName = (await getLeadStages(s.member_id)).find((x) => x.id === target)?.name || target; } catch { /* имя не критично */ }
 
-  const title = s.title || `Подборка №${s.id}`;
+  const title = bb(s.title || `Подборка №${s.id}`);
   const wanted = items.filter((i) => i.wantViewing).map((i) => i.object);
   let todoNote = '';
   if (decision === 'viewing') {
@@ -165,7 +166,7 @@ export async function checkSelection(selectionId, { evaluate = false, items = []
   }
 
   const reason = decision === 'viewing'
-    ? `клиент хочет посмотреть вживую: ${wanted.map((o) => o.title).join('; ')}`
+    ? `клиент хочет посмотреть вживую: ${bb(wanted.map((o) => o.title).join('; '))}`
     : 'клиенту не подошёл ни один объект подборки';
   try {
     await callAsApp(s.member_id, 'crm.timeline.comment.add', {

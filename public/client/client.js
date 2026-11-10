@@ -39,8 +39,8 @@
     root.innerHTML = `
       <header class="c-header">
         <div class="c-header__inner">
-          <a class="c-brand" href="${esc(a.site)}" target="_blank" rel="noopener">
-            ${a.logo ? `<img src="${esc(a.logo)}" alt="" onerror="this.remove()">` : ''}
+          <a class="c-brand" href="${esc(U.safeUrl(a.site))}" target="_blank" rel="noopener noreferrer">
+            ${a.logo ? `<img src="${esc(a.logo)}" alt="" data-broken="remove">` : ''}
             <span>${esc(a.name)}</span>
           </a>
           ${a.phone ? `<a class="c-phone" href="tel:${esc(a.phone.replace(/[^\d+]/g, ''))}">${esc(a.phone)}</a>` : ''}
@@ -70,7 +70,7 @@
           <div class="c-bar__status">${r ? (r === total ? '✓ Все оценки у специалиста' : '✓ Оценки сохранены') : 'Ответы сохраняются автоматически'}</div>
         </div>
       </div>
-      <footer class="c-footer">${esc(a.name)} · <a href="${esc(a.site)}" target="_blank" rel="noopener">${esc(a.site.replace(/^https?:\/\//, ''))}</a></footer>`;
+      <footer class="c-footer">${esc(a.name)} · <a href="${esc(U.safeUrl(a.site))}" target="_blank" rel="noopener noreferrer">${esc(a.site.replace(/^https?:\/\//, ''))}</a></footer>`;
     bindCarousels();
   }
 
@@ -103,14 +103,14 @@
         ${o.categoryLabel ? `<div class="c-cat">${esc(o.categoryLabel)}</div>` : ''}
         <div class="c-price">${price(o.price)}${o.price_per_m2 ? `<span>${esc(o.price_per_m2)}</span>` : ''}</div>
         <h2 class="c-title">${esc(o.title)}</h2>
-        <a class="c-addr" href="${esc(mapUrl)}" target="_blank" rel="noopener">📍 ${esc(o.address || 'Показать на карте')}</a>
+        <a class="c-addr" href="${esc(U.safeUrl(mapUrl))}" target="_blank" rel="noopener noreferrer">📍 ${esc(o.address || 'Показать на карте')}</a>
         ${specs.length ? `<div class="c-specs">${specs.map(([v, l]) => `<div><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join('')}</div>` : ''}
         ${it.agentNote ? `<div class="c-note"><span>Комментарий специалиста</span>${esc(it.agentNote)}</div>` : ''}
         <button class="c-more" data-act="more" data-id="${it.itemId}">${isOpen ? 'Скрыть подробности ▲' : 'Подробнее об объекте ▼'}</button>
         ${isOpen ? `<div class="c-details">
           ${props.length ? `<dl>${props.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>` : ''}
           ${o.description ? `<p class="c-descr">${esc(o.description)}</p>` : ''}
-          <a class="c-site" href="${esc(o.url)}" target="_blank" rel="noopener">Открыть на сайте →</a>
+          <a class="c-site" href="${esc(U.safeUrl(o.url))}" target="_blank" rel="noopener noreferrer">Открыть на сайте →</a>
         </div>` : ''}
 
         <div class="c-react">

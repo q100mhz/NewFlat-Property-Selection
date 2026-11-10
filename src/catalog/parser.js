@@ -4,7 +4,10 @@ const clean = (s) => (s || '').replace(/[​ ]/g, ' ').replace(/\s+/g, ' ').tri
 
 export function absUrl(base, href) {
   if (!href) return null;
-  try { return new URL(href, base).toString(); } catch { return null; }
+  try {
+    const u = new URL(href, base);
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.toString() : null;
+  } catch { return null; }
 }
 
 function num(s) {

@@ -11,6 +11,9 @@ import { queryDashboard, dashboardUsers } from './dashboard.js';
 import { getRules, getLeadStages, saveRules } from './automation.js';
 import { createSession, requireSession, escapeHtml } from './session.js';
 import {
+  baseHeaders, b24Csp, clientCsp, newNonce, inlineAssets, rateLimit, guardEnumeration, notFound, isExternal,
+} from './security.js';
+import {
   validDomain, callWithToken, savePortal, getPortal, deletePortal, bindPlacements, scheduleTokenRefresh,
 } from './bitrix.js';
 import {
@@ -32,12 +35,18 @@ if (!config.devMode) {
   }
 }
 
+if (config.devMode && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(config.baseUrl)) {
+  console.error('DEV_MODE=1 разрешён только для локального адреса (BASE_URL=http://localhost:…). Остановка.');
+  process.exit(1);
+}
+
 installNetwork(); // перебор адресов при подключении (см. src/net.js)
 
 const app = express();
 // Чьим заголовкам X-Forwarded-For доверять. В Docker прокси (nginx) приходит из внутренней сети — TRUST_PROXY=uniquelocal
 app.set('trust proxy', process.env.TRUST_PROXY || 'loopback');
 app.disable('x-powered-by');
+app.use(baseHeaders);
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(express.json({ limit: '1mb' }));
 
@@ -45,15 +54,27 @@ const PUBLIC = path.join(ROOT, 'public');
 const readTpl = (rel) => fs.readFileSync(path.join(PUBLIC, rel), 'utf8');
 const asyncH = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-/** Вставляет стартовые данные в HTML-шаблон (безопасно для <script>). */
-function renderWithBoot(tpl, boot) {
+/** Страница для Битрикс24: стартовые данные + весь CSS/JS встроены в ответ, строгая CSP с nonce. */
+function sendB24Page(res, tpl, boot) {
+  const nonce = newNonce();
   const json = JSON.stringify(boot).replace(/</g, '\\u003c').replace(/[\u2028\u2029]/g, '');
-  return readTpl(tpl).replace('<!--BOOT-->', `<script>window.__BOOT__ = ${json};</script>`);
+  const html = readTpl(tpl).replace('<!--BOOT-->', `<script>window.__BOOT__ = ${json};</script>`);
+  res.set({ 'Content-Security-Policy': b24Csp(nonce), 'Cache-Control': 'no-store' });
+  res.type('html').send(inlineAssets(html, nonce));
 }
 
-app.use('/static', express.static(PUBLIC, { maxAge: config.devMode ? 0 : '1h', index: false }));
-app.get('/img', imageHandler);
-app.get('/health', (_req, res) => res.json({ ok: true }));
+// Публично раздаются только ресурсы страницы клиента; код интерфейса сотрудника встраивается в страницы Битрикс24
+const staticOpts = { maxAge: config.devMode ? 0 : '1h', index: false, fallthrough: false };
+app.use('/static/client', express.static(path.join(PUBLIC, 'client'), staticOpts));
+app.use('/static/shared', express.static(path.join(PUBLIC, 'shared'), staticOpts));
+app.get('/img', rateLimit('img', 900, 60e3), imageHandler);
+// проверка работоспособности — только изнутри сервера (Docker healthcheck), снаружи «не найдено»
+app.get('/health', (req, res) => (isExternal(req) ? notFound(req, res) : res.json({ ok: true })));
+
+// Ошибка входа через Битрикс24: пользователю — нейтральный текст, подробности — только в лог
+class AccessError extends Error {
+  constructor(logMessage) { super('Не удалось открыть приложение. Обратитесь к администратору портала.'); this.status = 403; this.log = logMessage; }
+}
 
 // ---------------- Битрикс24: установка ----------------
 
@@ -80,13 +101,17 @@ async function verifyAppToken(domain, token) {
   return info.result;
 }
 
-/** Сохраняет доступ к порталу и регистрирует вкладки. Вызывается при установке и при первом открытии. */
+/**
+ * Сохраняет доступ к порталу и регистрирует вкладки. Вызывается при установке и при первом открытии.
+ * Принимается только ключ администратора портала: иначе сотрудник мог бы подменить служебный доступ приложения своим.
+ */
 async function installPortal(a, reason = 'install') {
   try {
     await verifyAppToken(a.domain, a.accessToken);
+    const me = (await callWithToken(a.domain, 'user.current', {}, a.accessToken)).result;
+    if (!me?.ADMIN) throw new Error(`пользователь ${me?.ID} не администратор портала`);
   } catch (e) {
-    console.warn(`[install] ${a.domain}: отказ (${reason}): ${e.message}`);
-    throw e;
+    throw new AccessError(`[install] ${a.domain}: отказ (${reason}): ${e.message}`);
   }
   savePortal({ ...a });
   const results = await bindPlacements(a.domain, a.accessToken);
@@ -94,14 +119,16 @@ async function installPortal(a, reason = 'install') {
   return results;
 }
 
-app.all('/b24/install', asyncH(async (req, res) => {
+const b24Limit = rateLimit('b24', 120, 60e3);
+
+app.post('/b24/install', b24Limit, asyncH(async (req, res) => {
   const a = authFromRequest(req);
-  if (!a.domain || !a.accessToken || !a.memberId) {
-    return res.status(400).send('Откройте установку из Битрикс24.');
-  }
+  if (!a.domain || !a.accessToken || !a.memberId) return notFound(req, res);
   const results = await installPortal(a);
   const failed = results.filter((r) => !r.ok);
-  res.type('html').send(`<!doctype html><html lang="ru"><head><meta charset="utf-8">
+  const nonce = newNonce();
+  res.set({ 'Content-Security-Policy': b24Csp(nonce), 'Cache-Control': 'no-store' });
+  res.type('html').send(inlineAssets(`<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <script src="https://api.bitrix24.com/api/v1/"></script>
 <link rel="stylesheet" href="/static/shared/base.css"></head>
 <body class="b24-page"><div class="install-box">
@@ -109,10 +136,10 @@ app.all('/b24/install', asyncH(async (req, res) => {
 <p>В карточках лидов и сделок появилась вкладка <b>«Подборка»</b>.</p>
 ${failed.length ? `<p class="warn">Не удалось зарегистрировать: ${failed.map((f) => escapeHtml(`${f.placement || f.event}: ${f.error}`)).join('; ')}</p>` : ''}
 </div>
-<script>BX24.init(function(){ BX24.installFinish(); });</script></body></html>`);
+<script>BX24.init(function(){ BX24.installFinish(); });</script></body></html>`, nonce));
 }));
 
-app.post('/b24/events', asyncH(async (req, res) => {
+app.post('/b24/events', rateLimit('b24events', 20, 60e3), asyncH(async (req, res) => {
   const event = req.body?.event;
   const memberId = req.body?.auth?.member_id;
   if (event === 'ONAPPUNINSTALL' && memberId) {
@@ -131,19 +158,22 @@ app.post('/b24/events', asyncH(async (req, res) => {
 
 async function buildAgentSession(req) {
   const a = authFromRequest(req);
-  if (!a.accessToken || !a.memberId) throw Object.assign(new Error('Откройте приложение из Битрикс24.'), { status: 400 });
+  if (!a.accessToken || !a.memberId) throw Object.assign(new Error('Not found'), { status: 404, silent: true });
   let portal = getPortal(a.memberId);
   if (!portal) {
-    // Битрикс24 вызывает адрес установки один раз; если тогда сервер был недоступен — устанавливаемся сейчас
-    if (!a.domain) {
-      console.warn(`[install] нет данных портала ${a.memberId}, и в запросе нет DOMAIN`);
-      throw Object.assign(new Error('Приложение не установлено на этом портале. Переустановите его.'), { status: 403 });
-    }
+    // Битрикс24 вызывает адрес установки один раз; если тогда сервер был недоступен —
+    // устанавливаемся при первом открытии (только администратором портала)
+    if (!a.domain) throw new AccessError(`[install] нет данных портала ${a.memberId}, и в запросе нет DOMAIN`);
     await installPortal(a, 'первое открытие');
     portal = getPortal(a.memberId);
   }
   // запрос идёт только на сохранённый при установке домен портала
-  const me = (await callWithToken(portal.domain, 'user.current', {}, a.accessToken)).result;
+  let me;
+  try {
+    me = (await callWithToken(portal.domain, 'user.current', {}, a.accessToken)).result;
+  } catch (e) {
+    throw new AccessError(`[auth] ${portal.domain}: ключ пользователя не принят: ${e.message}`);
+  }
   // Администратор открыл приложение — обновляем сохранённый доступ к порталу:
   // так подхватываются права, добавленные приложению после установки.
   if (me.ADMIN && a.refreshToken && a.domain === portal.domain) {
@@ -162,21 +192,26 @@ async function buildAgentSession(req) {
   };
 }
 
-app.post('/b24/placement', asyncH(async (req, res) => {
+app.post('/b24/placement', b24Limit, asyncH(async (req, res) => {
   const { portal, accessToken, base } = await buildAgentSession(req);
   const placement = String(req.body.PLACEMENT || '');
   let options = {};
   try { options = JSON.parse(req.body.PLACEMENT_OPTIONS || '{}'); } catch { /* ignore */ }
   const entityType = placement === 'CRM_LEAD_DETAIL_TAB' ? 'lead' : placement === 'CRM_DEAL_DETAIL_TAB' ? 'deal' : null;
   const entityId = Number(options.ID);
-  if (!entityType || !entityId) return res.status(400).send('Неизвестное место встраивания');
+  if (!entityType || !entityId) return notFound(req, res);
 
   // проверка доступа сотрудника к сущности (заодно получаем лид-источник сделки)
-  const entity = (await callWithToken(portal.domain, `crm.${entityType}.get`, { id: entityId }, accessToken)).result;
+  let entity;
+  try {
+    entity = (await callWithToken(portal.domain, `crm.${entityType}.get`, { id: entityId }, accessToken)).result;
+  } catch (e) {
+    throw new AccessError(`[auth] нет доступа к ${entityType} ${entityId} у пользователя ${base.userId}: ${e.message}`);
+  }
   const leadId = entityType === 'deal' && Number(entity.LEAD_ID) ? Number(entity.LEAD_ID) : null;
 
   const session = { ...base, entityType, entityId, leadId };
-  res.type('html').send(renderWithBoot('app/index.html', {
+  sendB24Page(res, 'app/index.html', {
     token: createSession(session),
     entityType, entityId, leadId,
     entityTitle: entity.TITLE || '',
@@ -184,21 +219,20 @@ app.post('/b24/placement', asyncH(async (req, res) => {
     portalDomain: portal.domain,
     inBitrix: true,
     timezone: config.timezone,
-  }));
+  });
 }));
 
 // Главная страница приложения (пункт в меню «Приложения»)
-app.post('/b24/handler', asyncH(async (req, res) => {
+app.post('/b24/handler', b24Limit, asyncH(async (req, res) => {
   const { portal, base } = await buildAgentSession(req);
-  res.type('html').send(renderWithBoot('app/dashboard.html', {
+  sendB24Page(res, 'app/dashboard.html', {
     token: createSession({ ...base, entityType: null, entityId: null }),
     user: { id: base.userId, name: base.userName, isAdmin: base.isAdmin },
     portalDomain: portal.domain, inBitrix: true, timezone: config.timezone,
     stats: catalogStats(),
     sections: CATALOG_SECTIONS.map((s) => ({ category: s.category, label: s.label })),
-  }));
+  });
 }));
-app.get('/b24/handler', (_req, res) => res.redirect('/'));
 
 // ---------------- API сотрудника ----------------
 
@@ -286,24 +320,8 @@ api.post('/selections/:id/archive', requireEntity, (req, res) => {
 
 // ---------------- Публичная часть для клиента ----------------
 
-// простое ограничение частоты запросов по IP
-const hits = new Map();
-function rateLimit(max, windowMs) {
-  return (req, res, next) => {
-    const key = req.ip + req.path.split('/').slice(0, 4).join('/');
-    const now = Date.now();
-    const h = hits.get(key) || { n: 0, t: now };
-    if (now - h.t > windowMs) { h.n = 0; h.t = now; }
-    h.n++;
-    hits.set(key, h);
-    if (h.n > max) return res.status(429).json({ error: 'Слишком много запросов, попробуйте позже' });
-    next();
-  };
-}
-setInterval(() => { const now = Date.now(); for (const [k, v] of hits) if (now - v.t > 600e3) hits.delete(k); }, 600e3).unref();
-
 const pub = express.Router();
-pub.use(rateLimit(240, 60e3));
+pub.use(guardEnumeration, rateLimit('public', 300, 60e3));
 pub.get('/:token', (req, res) => {
   const s = getPublicSelection(req.params.token);
   if (!s) return res.status(404).json({ error: 'Подборка не найдена или больше недоступна' });
@@ -360,16 +378,15 @@ api.post('/settings/full-access', requireAdmin, (req, res) => res.json({ users: 
 app.use('/api/public', pub);
 app.use('/api', api); // после публичного роутера: требует сессию сотрудника
 
-app.get('/s/:token', (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  res.set('X-Robots-Tag', 'noindex, nofollow');
+const publicHost = new URL(config.publicUrl).host;
+app.get('/s/:token', guardEnumeration, rateLimit('page', 120, 60e3), (req, res) => {
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(req.params.token)) return notFound(req, res);
+  // старые ссылки на служебном адресе — на адрес для клиентов
+  if (isExternal(req) && req.get('host') !== publicHost && config.publicUrl !== config.baseUrl) {
+    return res.redirect(301, `${config.publicUrl}/s/${req.params.token}`);
+  }
+  res.set({ 'Cache-Control': 'no-store', 'Content-Security-Policy': clientCsp() });
   res.type('html').send(readTpl('client/index.html'));
-});
-
-app.get('/', (_req, res) => {
-  res.type('html').send(`<!doctype html><meta charset="utf-8"><title>Подборка объектов</title>
-<link rel="stylesheet" href="/static/shared/base.css"><body class="b24-page"><div class="install-box">
-<h2>Подборка объектов для Битрикс24</h2><p>Приложение работает внутри портала Битрикс24 — откройте вкладку «Подборка» в карточке лида или сделки.</p></div>`);
 });
 
 // ---------------- Режим разработки ----------------
@@ -380,36 +397,46 @@ if (config.devMode) {
     const entityType = req.query.entity === 'deal' ? 'deal' : 'lead';
     const entityId = Number(req.query.id) || 1;
     const session = { memberId: 'dev', userId: 1, userName: 'Тестовый Сотрудник', isAdmin: true, entityType, entityId, leadId: null };
-    res.type('html').send(renderWithBoot('app/index.html', {
+    sendB24Page(res, 'app/index.html', {
       token: createSession(session), entityType, entityId, leadId: null, entityTitle: `Тестовый ${entityType} #${entityId}`,
       user: { id: 1, name: session.userName }, portalDomain: 'dev.bitrix24.ru', inBitrix: false, timezone: config.timezone,
-    }));
+    });
   });
   app.get('/dev/dashboard', (req, res) => {
     const isAdmin = req.query.admin !== '0';
     const userId = Number(req.query.user) || 1;
     const base = { memberId: 'dev', userId, userName: `Тестовый пользователь ${userId}`, isAdmin };
-    res.type('html').send(renderWithBoot('app/dashboard.html', {
+    sendB24Page(res, 'app/dashboard.html', {
       token: createSession({ ...base, entityType: null, entityId: null }),
       user: { id: userId, name: base.userName, isAdmin }, portalDomain: 'dev.bitrix24.ru', inBitrix: false, timezone: config.timezone,
       stats: catalogStats(), sections: CATALOG_SECTIONS.map((s) => ({ category: s.category, label: s.label })),
-    }));
+    });
   });
   console.log('DEV: вкладка доступна по адресу /dev/placement?entity=lead&id=1, дашборд — /dev/dashboard');
 }
 
 // ---------------- Ошибки ----------------
 
+// всё остальное (в том числе корень сайта) — нейтральное «не найдено»
+app.use(notFound);
+
 app.use((err, req, res, _next) => {
+  if (err.status === 404 && err.silent) return notFound(req, res);
+  if (err.type === 'entity.parse.failed' || err.type === 'entity.too.large') return res.status(400).json({ error: 'Bad request' });
   const status = err.status || 500;
-  if (status >= 500) console.error(err);
+  if (err.log) console.warn(err.log);
+  else if (status >= 500) console.error(err);
   const msg = status >= 500 && !err.code ? 'Внутренняя ошибка' : err.message;
   if (req.path.startsWith('/api/')) return res.status(status).json({ error: msg });
-  res.status(status).type('html').send(`<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/static/shared/base.css">
-<body class="b24-page"><div class="install-box"><h3>Ошибка</h3><p>${escapeHtml(msg)}</p></div>`);
+  res.status(status).set('Cache-Control', 'no-store').type('html')
+    .send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Ошибка</title>
+<body style="font:15px/1.5 sans-serif;color:#333;padding:40px 16px;text-align:center"><p>${escapeHtml(msg)}</p></body>`);
 });
 
-app.listen(config.port, config.host, () => {
+export { app };
+
+// в тестах сервер запускается отдельно (NO_LISTEN=1)
+if (process.env.NO_LISTEN !== '1') app.listen(config.port, config.host, () => {
   console.log(`Подборка: http://${config.host}:${config.port} (приложение ${config.baseUrl}, ссылки для клиентов ${config.publicUrl})`);
   scheduleCrawls();
   scheduleTokenRefresh();

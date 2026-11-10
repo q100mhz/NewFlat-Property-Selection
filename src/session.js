@@ -32,7 +32,7 @@ export function readSession(token) {
 export function requireSession(req, res, next) {
   const h = req.get('authorization') || '';
   const s = readSession(h.startsWith('Bearer ') ? h.slice(7) : null);
-  if (!s) return res.status(401).json({ error: 'Сессия истекла. Обновите вкладку карточки.' });
+  if (!s) return res.status(401).json({ error: 'Unauthorized' });
   req.session = s;
   next();
 }
@@ -41,6 +41,12 @@ export function requireSession(req, res, next) {
 export function newPublicToken() {
   return crypto.randomBytes(16).toString('base64url');
 }
+
+/** Текст для BB-кодов Битрикс24: квадратные скобки из данных не превращаются в разметку. */
+export const bb = (s) => String(s ?? '').replace(/\[/g, '(').replace(/\]/g, ')');
+
+/** Ссылка для BB-кода [URL=…]: только http(s) и без символов, ломающих разметку. */
+export const bbUrl = (u) => (/^https?:\/\/[^\s\[\]]+$/i.test(String(u || '')) ? u : '');
 
 export function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
