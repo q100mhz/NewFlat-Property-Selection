@@ -17,6 +17,8 @@ export const config = {
   host: env.HOST || '127.0.0.1',
   // Публичный адрес приложения (без слеша на конце)
   baseUrl: (env.BASE_URL || 'https://propertyselection.itb2bhost.ru').replace(/\/$/, ''),
+  // Адрес, на котором клиенты открывают подборки (ссылки /s/…). Пусто — тот же, что BASE_URL.
+  publicUrl: (env.PUBLIC_URL || env.BASE_URL || 'https://propertyselection.itb2bhost.ru').replace(/\/$/, ''),
   dbPath: env.DB_PATH || path.join(ROOT, 'data', 'app.sqlite'),
 
   // Данные локального приложения из Битрикс24 (Разработчикам → Другое → Локальное приложение)

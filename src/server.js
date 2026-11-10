@@ -410,7 +410,7 @@ app.use((err, req, res, _next) => {
 });
 
 app.listen(config.port, config.host, () => {
-  console.log(`Подборка: http://${config.host}:${config.port} (публичный адрес ${config.baseUrl})`);
+  console.log(`Подборка: http://${config.host}:${config.port} (приложение ${config.baseUrl}, ссылки для клиентов ${config.publicUrl})`);
   scheduleCrawls();
   scheduleTokenRefresh();
   scheduleDigests();

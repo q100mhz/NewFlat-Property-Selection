@@ -215,6 +215,19 @@ scp 'root@89.111.170.193:/var/lib/docker/volumes/propertyselection_data/_data/ba
 
 ---
 
+## Адрес для клиентов (newflat72.itb2bhost.ru)
+
+Ссылки, которые получают клиенты, ведут на отдельный адрес `PUBLIC_URL`. На нём открываются только страницы подборок, служебная часть приложения остаётся на `BASE_URL`. Старые ссылки на `BASE_URL/s/…` продолжают работать.
+
+```bash
+cp /opt/propertyselection/deploy/nginx-client.conf /etc/nginx/sites-available/newflat72.itb2bhost.ru.conf
+ln -s /etc/nginx/sites-available/newflat72.itb2bhost.ru.conf /etc/nginx/sites-enabled/
+nginx -t && systemctl reload nginx
+certbot --nginx -d newflat72.itb2bhost.ru --redirect
+grep -q '^PUBLIC_URL=' /opt/propertyselection/.env || echo 'PUBLIC_URL=https://newflat72.itb2bhost.ru' >> /opt/propertyselection/.env
+cd /opt/propertyselection && docker compose up -d
+```
+
 ## Обновление приложения
 
 ```bash

@@ -9,7 +9,7 @@ import { startForSelection, checkSelection } from './automation.js';
 
 const MAX_ITEMS = 50;
 
-export const publicLink = (token) => `${config.baseUrl}/s/${token}`;
+export const publicLink = (token) => `${config.publicUrl}/s/${token}`;
 
 /** «Подборка на 09.11.2026 14:05» по времени агентства (Тюмень). */
 export function defaultTitle(date = new Date(), timeZone = config.timezone) {
