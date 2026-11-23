@@ -36,6 +36,7 @@
     const total = data.items.length;
     const r = rated();
     const a = data.agency;
+    const phone = data.agentPhone || a.phone;
     root.innerHTML = `
       <header class="c-header">
         <div class="c-header__inner">
@@ -43,7 +44,7 @@
             ${a.logo ? `<img src="${esc(a.logo)}" alt="" data-broken="remove">` : ''}
             <span>${esc(a.name)}</span>
           </a>
-          ${a.phone ? `<a class="c-phone" href="tel:${esc(a.phone.replace(/[^\d+]/g, ''))}">${esc(a.phone)}</a>` : ''}
+          ${phone ? `<a class="c-phone" href="tel:${esc(phone.replace(/[^\d+]/g, ''))}">${esc(phone)}</a>` : ''}
         </div>
       </header>
       <main class="c-main">

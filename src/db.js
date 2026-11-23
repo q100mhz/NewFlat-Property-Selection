@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS meta (
 
 // Миграции: колонки, добавленные после первой версии
 const selCols = db.prepare('PRAGMA table_info(selections)').all().map((c) => c.name);
+if (!selCols.includes('agent_phone')) db.exec('ALTER TABLE selections ADD COLUMN agent_phone TEXT');
 if (!selCols.includes('last_activity_at')) db.exec('ALTER TABLE selections ADD COLUMN last_activity_at TEXT');
 if (!selCols.includes('digest_pending')) db.exec('ALTER TABLE selections ADD COLUMN digest_pending INTEGER NOT NULL DEFAULT 0');
 // автоматизация стадий лида: waiting | active | stopped | done | superseded (NULL — не применяется)

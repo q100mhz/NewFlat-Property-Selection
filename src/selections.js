@@ -203,7 +203,7 @@ export function getPublicSelection(token) {
     };
   });
   return {
-    title: s.title, message: s.message, agentName: s.created_by_name, createdAt: s.created_at,
+    title: s.title, message: s.message, agentName: s.created_by_name, agentPhone: s.agent_phone || null, createdAt: s.created_at,
     submittedAt: s.submitted_at, items,
     agency: { name: config.agencyName, phone: config.agencyPhone, logo: config.agencyLogo, site: config.siteUrl },
     reasons: DISLIKE_REASONS,
