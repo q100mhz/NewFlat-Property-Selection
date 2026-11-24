@@ -64,6 +64,8 @@ test('SVG-планировки со скриптами не принимаютс
   const okSvg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600"><rect width="800" height="600"/></svg>');
   const badSvg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" onload="alert(1)"><script>alert(1)</script></svg>');
   assert.ok(svc.inspectImage(okSvg));
+  const printPlan = Buffer.from('<svg width="77.75mm" height="137.93mm" viewBox="0 0 777.55 1379.3"><path d="M 0 0"/></svg>');
+  assert.deepEqual(svc.inspectImage(printPlan), { w: 777.55, h: 1379.3, type: 'svg' });
   assert.equal(svc.inspectImage(badSvg), null);
   assert.equal(svc.photoPath('1000000000', '../../app.sqlite'), null);
   assert.equal(svc.photoPath('../x', '0.jpg'), null);

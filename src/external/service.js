@@ -73,10 +73,11 @@ const nextId = db.transaction(() => {
 
 function svgSize(buf) {
   const head = buf.toString('utf8', 0, Math.min(buf.length, 4000));
-  if (!/<svg[\s>]/i.test(head)) return null;
-  const vb = head.match(/viewBox\s*=\s*["'][\d.\-]+[\s,]+[\d.\-]+[\s,]+([\d.]+)[\s,]+([\d.]+)/i);
-  const w = Number((head.match(/\swidth\s*=\s*["']([\d.]+)/i) || [])[1]) || Number(vb?.[1]);
-  const h = Number((head.match(/\sheight\s*=\s*["']([\d.]+)/i) || [])[1]) || Number(vb?.[2]);
+  const root = head.match(/<svg\b[^>]*>/i)?.[0];
+  if (!root) return null;
+  const vb = root.match(/viewBox\s*=\s*["'][\d.\-]+[\s,]+[\d.\-]+[\s,]+([\d.]+)[\s,]+([\d.]+)/i);
+  const w = Number(vb?.[1]) || Number(root.match(/\swidth\s*=\s*["']([\d.]+)(?:px)?["']/i)?.[1]);
+  const h = Number(vb?.[2]) || Number(root.match(/\sheight\s*=\s*["']([\d.]+)(?:px)?["']/i)?.[1]);
   return w && h ? { w, h, type: 'svg' } : null;
 }
 
