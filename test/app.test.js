@@ -255,8 +255,12 @@ test('клиентская подборка получает рабочий те
       assert.ok([52, 53].includes(params.id));
       result = { ASSIGNED_BY_ID: params.id === 52 ? '10' : '11' };
     } else if (method.endsWith('/user.get.json')) {
-      assert.deepEqual(params.select, ['ID', 'WORK_PHONE']);
-      result = [{ ID: String(params.filter.ID), WORK_PHONE: ({ 9: ' +7 3452 12-34-56 ', 10: '+7 3452 65-43-21' })[params.filter.ID] || '', PERSONAL_MOBILE: '+7 912 000-00-00' }];
+      assert.deepEqual(params.select, ['ID', 'NAME', 'LAST_NAME', 'WORK_PHONE']);
+      result = [{ ID: String(params.filter.ID), NAME: 'Дарья', LAST_NAME: 'Горная', WORK_PHONE: ({ 9: ' +7 3452 12-34-56 ', 10: '+7 3452 65-43-21' })[params.filter.ID] || '', PERSONAL_MOBILE: '+7 912 000-00-00' }];
+    } else if (method.endsWith('/crm.timeline.comment.add.json')) {
+      assert.match(params.fields.COMMENT, /Ссылка для клиента/);
+      assert.equal(params.fields.ENTITY_ID === 51 ? 'lead' : 'deal', params.fields.ENTITY_TYPE);
+      result = 123;
     } else {
       result = [];
     }
@@ -265,7 +269,12 @@ test('клиентская подборка получает рабочий те
   try {
     for (const [entityType, entityId, phone] of [['lead', 51, '+7 3452 12-34-56'], ['deal', 52, '+7 3452 65-43-21'], ['deal', 53, null]]) {
       const selection = await m.sel.createSelection({ memberId, userId: 5, entityType, entityId }, { items: [{ id: objectId }] });
-      assert.equal(m.sel.getPublicSelection(selection.token).agentPhone, phone);
+      const publicSelection = m.sel.getPublicSelection(selection.token);
+      assert.equal(publicSelection.agentPhone, phone);
+      assert.equal(publicSelection.agentName, 'Дарья Горная');
+      const session = { memberId, userId: 5, entityType, entityId };
+      assert.equal(await m.sel.recordSelectionInTimeline({ ...session, userId: 6 }, selection.id), null);
+      assert.equal(await m.sel.recordSelectionInTimeline(session, selection.id), true);
     }
   } finally {
     global.fetch = originalFetch;

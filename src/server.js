@@ -22,7 +22,7 @@ import {
   searchCatalog, catalogStats, getObjectDetail, normalizeObjectUrl, crawlCatalog, scheduleCrawls,
 } from './catalog/catalog.js';
 import {
-  createSelection, listSelectionsForAgent, getSelectionForAgent, setArchived,
+  createSelection, recordSelectionInTimeline, listSelectionsForAgent, getSelectionForAgent, setArchived,
   getPublicSelection, registerView, saveReaction, allowedEntities, scheduleDigests, deleteSelection,
 } from './selections.js';
 
@@ -376,6 +376,11 @@ api.get('/selections', requireEntity, (req, res) => res.json(listSelectionsForAg
 api.post('/selections', requireEntity, asyncH(async (req, res) => {
   const sel = await createSelection(req.session, req.body || {});
   res.json(sel);
+}));
+api.post('/selections/:id/timeline', requireEntity, rateLimit('selection-timeline', 30, 60e3), asyncH(async (req, res) => {
+  const ok = await recordSelectionInTimeline(req.session, Number(req.params.id));
+  if (ok === null) return res.status(404).json({ error: 'Подборка не найдена' });
+  res.json({ ok });
 }));
 api.get('/selections/:id', requireEntity, (req, res) => {
   const s = getSelectionForAgent(req.session, Number(req.params.id));

@@ -29,7 +29,7 @@ function snapshotOf(o) {
   };
 }
 
-async function getResponsibleWorkPhone(session) {
+export async function getResponsibleContact(session) {
   const method = session.entityType === 'lead' ? 'crm.lead.get' : 'crm.deal.get';
   try {
     const { result: entity } = await callAsApp(session.memberId, method, { id: session.entityId });
@@ -38,10 +38,15 @@ async function getResponsibleWorkPhone(session) {
 
     const { result: users } = await callAsApp(session.memberId, 'user.get', {
       filter: { ID: responsibleId },
-      select: ['ID', 'WORK_PHONE'],
+      select: ['ID', 'NAME', 'LAST_NAME', 'WORK_PHONE'],
     });
-    const phone = users?.find((user) => Number(user.ID) === responsibleId)?.WORK_PHONE;
-    return typeof phone === 'string' && /\d/.test(phone) ? phone.trim() : null;
+    const user = users?.find((entry) => Number(entry.ID) === responsibleId);
+    if (!user) return null;
+    const phone = user.WORK_PHONE;
+    return {
+      name: [user.NAME, user.LAST_NAME].filter(Boolean).join(' ').trim() || null,
+      phone: typeof phone === 'string' && /\d/.test(phone) ? phone.trim() : null,
+    };
   } catch (err) {
     console.warn('[selection] Не удалось получить рабочий телефон ответственного', err.code || err.name);
     return null;
@@ -66,15 +71,15 @@ export async function createSelection(session, { title, message, items }) {
     objects.push({ snapshot: snapshotOf(detail || row), note: it.note });
   }
 
-  const agentPhone = await getResponsibleWorkPhone(session);
+  const contact = await getResponsibleContact(session);
   const token = newPublicToken();
   const tx = db.transaction(() => {
     const info = db.prepare(`
-      INSERT INTO selections (token, member_id, entity_type, entity_id, title, message, created_by_id, created_by_name, agent_phone)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO selections (token, member_id, entity_type, entity_id, title, message, created_by_id, created_by_name, agent_phone, agent_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(token, session.memberId, session.entityType, session.entityId,
       String(title || '').trim().slice(0, 200) || defaultTitle(), String(message || '').slice(0, 3000) || null,
-      session.userId || null, session.userName || null, agentPhone);
+      session.userId || null, session.userName || null, contact?.phone ?? null, contact?.name ?? null);
     const ins = db.prepare('INSERT INTO selection_items (selection_id, object_id, position, snapshot_json, agent_note) VALUES (?, ?, ?, ?, ?)');
     objects.forEach((o, i) => ins.run(info.lastInsertRowid, o.snapshot.id, i, JSON.stringify(o.snapshot), o.note || null));
     return info.lastInsertRowid;
@@ -223,7 +228,7 @@ export function getPublicSelection(token) {
     };
   });
   return {
-    title: s.title, message: s.message, agentName: s.created_by_name, agentPhone: s.agent_phone || null, createdAt: s.created_at,
+    title: s.title, message: s.message, agentName: s.agent_name, agentPhone: s.agent_phone || null, createdAt: s.created_at,
     submittedAt: s.submitted_at, items,
     agency: { name: config.agencyName, phone: config.agencyPhone, logo: config.agencyLogo, site: config.siteUrl },
     reasons: DISLIKE_REASONS,
@@ -354,6 +359,36 @@ export function buildFeedbackComment(s, items) {
   group('👎 Не подходит', (i) => i.reaction === 'dislike');
   group('Без оценки', (i) => !i.reaction);
   return lines.join('\n').trim();
+}
+
+export async function recordSelectionInTimeline(session, id) {
+  const row = db.prepare('SELECT * FROM selections WHERE id = ?').get(id);
+  if (!canAccess(session, row) || row.archived || Number(row.created_by_id) !== session.userId) return null;
+
+  const items = itemsOf(id).map((item) => itemView(item, { full: true }));
+  const link = publicLink(row.token);
+  const list = items.map(({ object }, index) =>
+    `${index + 1}. ${bb(object.title)} — ${fmtPrice(object.price)}`);
+  const comment = [
+    `[B]Создана подборка «${selectionName(row)}»[/B]`,
+    `Ссылка для клиента: [URL=${link}]${link}[/URL]`,
+    '',
+    ...list,
+  ].join('\n');
+
+  try {
+    const { result } = await callAsApp(row.member_id, 'crm.timeline.comment.add', {
+      fields: {
+        ENTITY_ID: row.entity_id,
+        ENTITY_TYPE: row.entity_type,
+        COMMENT: comment,
+      },
+    });
+    return Boolean(result);
+  } catch (err) {
+    console.warn('[timeline] Не удалось записать ссылку подборки', id, err.code || err.name);
+    return false;
+  }
 }
 
 async function notifyAgents(s, message) {

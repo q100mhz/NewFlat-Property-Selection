@@ -41,18 +41,6 @@
   const fitSoon = debounce(fit, 80);
   if (window.ResizeObserver) new ResizeObserver(fitSoon).observe(document.body);
 
-  function addTimelineComment(sel) {
-    if (!hasBX()) return Promise.resolve(false);
-    const list = sel.items.map((i, n) => `${n + 1}. [URL=${U.safeUrl(i.object.url)}]${U.bb(i.object.title)}[/URL] — ${price(i.object.price)}`).join('\n');
-    const comment = `[B]Отправлена подборка «${U.bb(sel.title || 'Подборка №' + sel.id)}»[/B] (${sel.items.length} ${plural(sel.items.length, 'объект', 'объекта', 'объектов')})\n` +
-      `Ссылка для клиента: [URL=${sel.link}]${sel.link}[/URL]\n\n${list}`;
-    return new Promise((resolve) => {
-      BX24.callMethod('crm.timeline.comment.add', {
-        fields: { ENTITY_ID: BOOT.entityId, ENTITY_TYPE: BOOT.entityType, COMMENT: comment },
-      }, (r) => resolve(!r.error()));
-    });
-  }
-
   // ---------- Загрузка ----------
   async function loadHistory() {
     const data = await api('/selections');
@@ -357,7 +345,7 @@
       ${shareButtons(s)}
       <div class="sel__link"><input class="input input-link" readonly value="${esc(s.link)}">
         <button class="btn btn-blue btn-sm" data-act="copy" data-link="${esc(s.link)}">Копировать</button></div>
-      ${s.timeline === true ? '<p class="small muted">✓ Ссылка добавлена в таймлайн карточки</p>' : s.timeline === false && hasBX() ? '<p class="small warn">Не удалось добавить комментарий в таймлайн</p>' : ''}
+      ${s.timeline === true ? '<p class="small muted">✓ Ссылка добавлена в таймлайн карточки</p>' : s.timeline === false ? '<p class="small warn">Не удалось добавить комментарий в таймлайн. Ссылку можно скопировать.</p>' : '<p class="small muted">Добавляем ссылку в таймлайн…</p>'}
       <div class="modal__actions"><button class="btn btn-primary" data-act="close-created">Готово</button></div>
     </div></div>`;
   }
@@ -572,13 +560,19 @@
         method: 'POST',
         body: { title: state.title, message: state.message, items: state.chosen.map((c) => ({ id: c.id, note: c.note })) },
       });
-      const timeline = await addTimelineComment(sel);
-      state.created = { ...sel, timeline };
-      await loadHistory();
+      const created = { ...sel, timeline: null };
+      state.created = created;
+      state.selections = [sel, ...state.selections];
       state.view = 'history';
       state.expanded = new Set([sel.id]);
       state.chosen = [];
       render();
+
+      api('/selections/' + sel.id + '/timeline', { method: 'POST' })
+        .then((result) => { created.timeline = result.ok === true; })
+        .catch(() => { created.timeline = false; })
+        .finally(() => { if (state.created === created) renderKeepFocus(); });
+      loadHistory().catch(() => {});
     } catch (e) {
       toast(e.message);
       if (btn) { btn.disabled = false; btn.textContent = 'Создать и получить ссылку'; }
