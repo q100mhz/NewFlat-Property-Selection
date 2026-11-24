@@ -235,3 +235,39 @@ test('лиды: номера телефонов и права на лид', asyn
   assert.equal(canSeeLead({ all: false, userIds: [7] }, { ASSIGNED_BY_ID: '7' }), true);
   assert.equal(canSeeLead({ all: false, userIds: [7] }, { ASSIGNED_BY_ID: '8' }), false);
 });
+
+test('клиентская подборка получает рабочий телефон ответственного за лид или сделку', async () => {
+  const memberId = 'phone-portal';
+  m.bitrix.savePortal({ memberId, domain: 'agency.bitrix24.ru', accessToken: 'a', refreshToken: 'r', expiresIn: 3600 });
+  const objectId = 1000000990;
+  m.db.prepare(`INSERT INTO objects (id, url, title, source, detail_json)
+    VALUES (?, 'https://example.com/flat/990', 'Квартира', 'link', '{}')`).run(objectId);
+
+  const originalFetch = global.fetch;
+  global.fetch = async (url, opts) => {
+    const method = new URL(url).pathname;
+    const params = JSON.parse(opts.body);
+    let result;
+    if (method.endsWith('/crm.lead.get.json')) {
+      assert.equal(params.id, 51);
+      result = { ASSIGNED_BY_ID: '9' };
+    } else if (method.endsWith('/crm.deal.get.json')) {
+      assert.ok([52, 53].includes(params.id));
+      result = { ASSIGNED_BY_ID: params.id === 52 ? '10' : '11' };
+    } else if (method.endsWith('/user.get.json')) {
+      assert.deepEqual(params.select, ['ID', 'WORK_PHONE']);
+      result = [{ ID: String(params.filter.ID), WORK_PHONE: ({ 9: ' +7 3452 12-34-56 ', 10: '+7 3452 65-43-21' })[params.filter.ID] || '', PERSONAL_MOBILE: '+7 912 000-00-00' }];
+    } else {
+      result = [];
+    }
+    return new Response(JSON.stringify({ result }));
+  };
+  try {
+    for (const [entityType, entityId, phone] of [['lead', 51, '+7 3452 12-34-56'], ['deal', 52, '+7 3452 65-43-21'], ['deal', 53, null]]) {
+      const selection = await m.sel.createSelection({ memberId, userId: 5, entityType, entityId }, { items: [{ id: objectId }] });
+      assert.equal(m.sel.getPublicSelection(selection.token).agentPhone, phone);
+    }
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

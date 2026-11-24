@@ -29,6 +29,25 @@ function snapshotOf(o) {
   };
 }
 
+async function getResponsibleWorkPhone(session) {
+  const method = session.entityType === 'lead' ? 'crm.lead.get' : 'crm.deal.get';
+  try {
+    const { result: entity } = await callAsApp(session.memberId, method, { id: session.entityId });
+    const responsibleId = Number(entity?.ASSIGNED_BY_ID);
+    if (!Number.isSafeInteger(responsibleId) || responsibleId <= 0) return null;
+
+    const { result: users } = await callAsApp(session.memberId, 'user.get', {
+      filter: { ID: responsibleId },
+      select: ['ID', 'WORK_PHONE'],
+    });
+    const phone = users?.find((user) => Number(user.ID) === responsibleId)?.WORK_PHONE;
+    return typeof phone === 'string' && /\d/.test(phone) ? phone.trim() : null;
+  } catch (err) {
+    console.warn('[selection] Не удалось получить рабочий телефон ответственного', err.code || err.name);
+    return null;
+  }
+}
+
 /** Создание подборки: подтягиваем актуальные карточки объектов и сохраняем снимок. */
 export async function createSelection(session, { title, message, items }) {
   if (!Array.isArray(items) || !items.length) throw Object.assign(new Error('Добавьте хотя бы один объект'), { status: 400 });
@@ -47,14 +66,15 @@ export async function createSelection(session, { title, message, items }) {
     objects.push({ snapshot: snapshotOf(detail || row), note: it.note });
   }
 
+  const agentPhone = await getResponsibleWorkPhone(session);
   const token = newPublicToken();
   const tx = db.transaction(() => {
     const info = db.prepare(`
-      INSERT INTO selections (token, member_id, entity_type, entity_id, title, message, created_by_id, created_by_name)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO selections (token, member_id, entity_type, entity_id, title, message, created_by_id, created_by_name, agent_phone)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(token, session.memberId, session.entityType, session.entityId,
       String(title || '').trim().slice(0, 200) || defaultTitle(), String(message || '').slice(0, 3000) || null,
-      session.userId || null, session.userName || null);
+      session.userId || null, session.userName || null, agentPhone);
     const ins = db.prepare('INSERT INTO selection_items (selection_id, object_id, position, snapshot_json, agent_note) VALUES (?, ?, ?, ?, ?)');
     objects.forEach((o, i) => ins.run(info.lastInsertRowid, o.snapshot.id, i, JSON.stringify(o.snapshot), o.note || null));
     return info.lastInsertRowid;
