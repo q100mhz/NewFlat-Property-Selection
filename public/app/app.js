@@ -399,7 +399,12 @@
         <button class="btn btn-light btn-sm" data-act="import-photos" ${state.editor.importingPhotos ? 'disabled' : ''}>${state.editor.importingPhotos ? 'Загружаем…' : 'Загрузить с сайта'}</button>
         <label class="btn btn-light btn-sm">+ Загрузить фото<input type="file" accept="image/jpeg,image/png,image/webp" multiple hidden data-upload></label></div>
       <div class="ed-photos">${photos.map((p, i) => `<div class="ed-photo">
-        <img src="${esc(p.small)}" alt="" loading="lazy" data-broken="hide">
+        <button type="button" class="ed-photo__preview" data-act="ph-preview" data-i="${i}" aria-label="Открыть фото ${i + 1}">
+          <img src="${esc(p.small)}" alt="" loading="lazy" data-broken="hide">
+        </button>
+        <button type="button" class="btn btn-icon ed-photo__star" data-act="ph-first" data-i="${i}"
+          aria-pressed="${i === 0}" aria-label="${i === 0 ? 'Первое фото' : 'Сделать первым фото ' + (i + 1)}"
+          title="${i === 0 ? 'Первое фото' : 'Сделать первым'}">${i === 0 ? '★' : '☆'}</button>
         <div class="ed-photo__tools">
           <button class="btn btn-icon btn-light" data-act="ph-left" data-i="${i}" ${i === 0 ? 'disabled' : ''} title="Раньше">←</button>
           <button class="btn btn-icon btn-light btn-danger-text" data-act="ph-del" data-i="${i}" title="Убрать фото">✕</button>
@@ -410,6 +415,30 @@
         <button class="btn btn-primary" data-act="save-editor" ${saving || state.editor.importingPhotos ? 'disabled' : ''}>${saving ? 'Сохраняем…' : 'Сохранить'}</button>
       </div>
     </div></div>`;
+  }
+
+  function openPhotoPreview(photo, index) {
+    if (!photo?.big) return;
+    const dialog = document.createElement('dialog');
+    dialog.className = 'ed-photo-dialog';
+    dialog.setAttribute('aria-label', 'Просмотр фото');
+    dialog.innerHTML = `<div class="ed-photo-dialog__tools">
+      <button type="button" class="btn btn-light btn-sm" data-size aria-pressed="false">Полный размер</button>
+      <button type="button" class="btn btn-light btn-sm" data-close autofocus>Закрыть</button>
+    </div>
+    <div class="ed-photo-dialog__image" tabindex="0">
+      <img src="${esc(U.safeUrl(photo.big))}" alt="Фото ${index + 1}">
+    </div>`;
+    dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
+    dialog.querySelector('[data-size]').addEventListener('click', (event) => {
+      const full = dialog.classList.toggle('is-full-size');
+      event.currentTarget.setAttribute('aria-pressed', String(full));
+      event.currentTarget.textContent = full ? 'По размеру окна' : 'Полный размер';
+    });
+    dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+    dialog.addEventListener('close', () => dialog.remove(), { once: true });
+    document.body.append(dialog);
+    dialog.showModal();
   }
 
   async function openEditor(id, warning) {
@@ -682,6 +711,23 @@
       case 'close-editor': state.editor = null; render(); break;
       case 'save-editor': saveEditor(); break;
       case 'import-photos': importPhotos(); break;
+      case 'ph-preview': {
+        const index = Number(el.dataset.i);
+        openPhotoPreview(state.editor?.obj?.photos?.[index], index);
+        break;
+      }
+      case 'ph-first': {
+        const index = Number(el.dataset.i);
+        const { photos } = collectEditor();
+        if (!photos?.[index] || index === 0) break;
+        photos.unshift(...photos.splice(index, 1));
+        const scrollTop = el.closest('.modal').scrollTop;
+        render();
+        const first = $app.querySelector('[data-act="ph-first"][data-i="0"]');
+        first.closest('.modal').scrollTop = scrollTop;
+        first.focus({ preventScroll: true });
+        break;
+      }
       case 'ph-left': case 'ph-right': case 'ph-del': {
         const o = collectEditor();
         const i = Number(el.dataset.i);
@@ -740,6 +786,7 @@
   });
 
   document.addEventListener('keydown', (e) => {
+    if (document.querySelector('.ed-photo-dialog[open]')) return;
     if (e.key === 'Escape' && state.editor && !state.editor.saving) { state.editor = null; render(); return; }
     if (e.key === 'Escape' && state.detail) { state.detail = null; render(); }
   });
