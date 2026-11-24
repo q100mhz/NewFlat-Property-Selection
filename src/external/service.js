@@ -57,7 +57,7 @@ const hostLabel = (url) => { try { return domainToUnicode(new URL(url).hostname.
 /** Понятное имя источника для сотрудника (по известным площадкам или названию сайта). */
 function sourceName(url, siteName) {
   const h = hostLabel(url) || '';
-  const known = [[/avito\./, 'Авито'], [/cian\./, 'ЦИАН'], [/domclick\./, 'ДомКлик'], [/realty\.ya|yandex\..*realty/, 'Яндекс Недвижимость'], [/etagi\./, 'Этажи'], [/n1\.ru/, 'N1']];
+  const known = [[/(^|\.)delomdev\.ru$/, 'Delom'], [/(^|\.)ludi-ludi\.ru$/, 'Люди'], [/(^|\.)meridian72\.ru$/, 'Меридиан'], [/(^|\.)arsibd\.com$/, 'ARSIB'], [/(^|\.)strana\.com$/, 'Страна Девелопмент'], [/avito\./, 'Авито'], [/cian\./, 'ЦИАН'], [/domclick\./, 'ДомКлик'], [/realty\.ya|yandex\..*realty/, 'Яндекс Недвижимость'], [/etagi\./, 'Этажи'], [/n1\.ru/, 'N1']];
   const k = known.find(([re]) => re.test(h));
   if (k) return k[1];
   const name = (siteName || '').replace(/\s*(сайт\s+застройщика|официальный\s+сайт)\s*/gi, ' ').trim();
@@ -102,10 +102,18 @@ function savePhoto(objectId, n, buf, type) {
   return `/photo/${objectId}/${file}`;
 }
 
-async function downloadPhotos(objectId, candidates, referer) {
+const photoHash = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 32);
+
+async function downloadPhotos(objectId, candidates, referer, existingPhotos = []) {
   const saved = [];
   const hashes = new Set();
-  let n = 0;
+  const existing = new Map();
+  for (const photo of existingPhotos) {
+    const file = photo.big?.split('/').pop();
+    const stored = file && photoPath(String(objectId), file);
+    if (!stored) continue;
+    try { existing.set(photoHash(fs.readFileSync(stored)), photo.big); } catch { /* файл уже недоступен */ }
+  }
   const queue = candidates.slice(0, 60);
   const signal = AbortSignal.timeout(15000);
   const worker = async () => {
@@ -116,11 +124,11 @@ async function downloadPhotos(objectId, candidates, referer) {
         if (r.status !== 200) continue;
         const size = inspectImage(r.body);
         if (!size) continue;
-        const h = crypto.createHash('sha1').update(r.body).digest('hex');
+        const h = photoHash(r.body);
         if (hashes.has(h) || saved.length >= MAX_PHOTOS) continue;
         hashes.add(h);
         const order = candidates.indexOf(url);
-        saved.push({ order, src: savePhoto(objectId, `${order}-${n++}`, r.body, size.type) });
+        saved.push({ order, src: existing.get(h) || savePhoto(objectId, h, r.body, size.type) });
       } catch { /* картинка недоступна — пропускаем */ }
     }
   };
@@ -202,7 +210,9 @@ async function importListing(url, session) {
   } else try {
     const page = await safeFetch(url, { kind: 'page' });
     const html = page.body.toString('utf8');
-    if (page.status === 404 || page.status === 410) {
+    if ([401, 403, 429].includes(page.status)) {
+      reason = 'Сайт ограничил доступ к объявлению с сервера. Заполните карточку вручную.';
+    } else if (page.status === 404 || page.status === 410) {
       reason = 'Объявление удалено или снято с публикации. Проверьте ссылку.';
     } else if (page.status >= 400 || BLOCK_PAGE.test(html.slice(0, 20000)) && html.length < 60000) {
       reason = 'Сайт не отдаёт объявление автоматически (защита от роботов). Заполните карточку вручную.';
@@ -217,13 +227,14 @@ async function importListing(url, session) {
     reason = 'Сайт не ответил. Заполните карточку вручную.';
   }
 
-  if (existing && reason) return { id, existed: true, warning: reason }; // повторная попытка не удалась — черновик остаётся
+  if (existing && !data) return { id, existed: true, warning: reason }; // повторная попытка не удалась — черновик остаётся
   const photos = data?.images?.length ? await downloadPhotos(id, data.images, url) : [];
+  if (existing && data && !photos.length && getLinkObject(id)?.detail.photos?.length) return { id, existed: true, warning: reason || 'Новые фото не загрузились. Сохранённая карточка остаётся доступной.' };
   if (data && !photos.length) reason ||= 'Характеристики загружены. Фото с сайта получить не удалось, их можно добавить вручную.';
   const src = sourceName(url, data?.siteName);
   const o = {
     id, url,
-    title: data?.title || hints.title || `Объект с ${src}`,
+    title: data?.title || hints.title || 'Объект по ссылке',
     address: data?.address || null,
     price: data?.price || null,
     rooms: data?.rooms ?? hints.rooms ?? null,
@@ -249,6 +260,23 @@ async function importListing(url, session) {
   upsertRow({ ...o });
   console.log(`[link] ${src}: объект ${id}, фото ${photos.length}${reason ? ' — черновик' : ''}`);
   return { id, existed: false, warning: reason };
+}
+
+/** Добавляет найденные изображения в редактор. Состав галереи сохраняет сотрудник. */
+export async function fetchLinkPhotos(id) {
+  const object = getLinkObject(id);
+  if (!object) return null;
+  const url = object.row.url;
+  if (isClosedPlatform(url)) throw Object.assign(new Error('Источник ограничивает автоматическую загрузку. Добавьте фото вручную.'), { status: 422 });
+
+  const page = await safeFetch(url).catch(() => null);
+  if (!page || page.status !== 200 || !/text\/html|xhtml/i.test(page.type)) {
+    throw Object.assign(new Error('Сайт не отдал страницу объявления. Добавьте фото вручную.'), { status: 422 });
+  }
+  const { images } = extractListing(page.body.toString('utf8'), page.url);
+  const photos = await downloadPhotos(id, images, page.url, object.detail.photos);
+  if (!photos.length) throw Object.assign(new Error('В объявлении не найдено доступных изображений.'), { status: 422 });
+  return photos;
 }
 
 // ---------- Правка сотрудником ----------

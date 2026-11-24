@@ -9,7 +9,7 @@ import { bus } from './events.js';
 import { resolveScope, getOrgStructure, getFullAccess, setFullAccess } from './access.js';
 import { queryDashboard, dashboardUsers } from './dashboard.js';
 import { getRules, getLeadStages, saveRules } from './automation.js';
-import { addByLink, updateLinkObject, addUploadedPhoto, photoPath } from './external/service.js';
+import { addByLink, updateLinkObject, addUploadedPhoto, fetchLinkPhotos, photoPath } from './external/service.js';
 import { createSession, requireSession, readSession, escapeHtml } from './session.js';
 import { searchLeads, getLeadForSession, firstPhone } from './leads.js';
 import {
@@ -344,6 +344,11 @@ api.patch('/objects/:id', (req, res) => {
   if (!ok) return res.status(404).json({ error: 'Объект не найден или не редактируется' });
   getObjectDetail({ id: Number(req.params.id) }).then((o) => res.json(o));
 });
+api.post('/objects/:id/photos/import', linkLimit, asyncH(async (req, res) => {
+  const photos = await fetchLinkPhotos(Number(req.params.id));
+  if (!photos) return res.status(404).json({ error: 'Объект не найден' });
+  res.json({ photos });
+}));
 api.post('/objects/:id/photos', rateLimit('upload', 120, 60e3), express.raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit: '15mb' }), (req, res) => {
   if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Нужна фотография JPG, PNG или WEBP' });
   const r = addUploadedPhoto(Number(req.params.id), req.body);

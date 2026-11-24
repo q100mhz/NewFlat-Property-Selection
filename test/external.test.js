@@ -132,3 +132,19 @@ test('параллельный импорт сохраняет разные об
   assert.equal(svc.getLinkObject(first.id).row.area_total, 54);
   assert.equal(svc.getLinkObject(second.id).row.area_total, 62);
 });
+
+test('Брусника сохраняет вид из окна из галереи, а общий баннер пропускает', () => {
+  const html = `<h1>Квартира с кухней-гостиной и одной спальней в жилом районе «Речной порт»</h1>
+    <div class="FlatDetailAboutMainViewer_demo"><div class="CommonDetailAboutMainViewerSlider_demo">
+      <img src="/media/complex/preview/view.jpg" />
+      <img alt="Планировка" src="/media/flat/flat_image_file/plan.svg" />
+    </div></div>
+    <img src="/media/complex/preview/promo.jpg" />`;
+  const listing = ex.extractListing(html, 'https://tyumen.brusnika.ru/flat/69940/');
+  assert.equal(listing.rooms, 1);
+  assert.equal(listing.complex, 'Речной порт');
+  assert.deepEqual(listing.images, [
+    'https://tyumen.brusnika.ru/media/complex/preview/view.jpg',
+    'https://tyumen.brusnika.ru/media/flat/flat_image_file/plan.svg',
+  ]);
+});

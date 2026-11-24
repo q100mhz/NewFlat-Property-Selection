@@ -47,7 +47,7 @@ function imageKey(url) {
 function largestFromSrcset(srcset) {
   let best = null;
   let bestW = -1;
-  for (const part of String(srcset).split(',')) {
+  for (const part of String(srcset || '').split(',')) {
     const [url, size] = part.trim().split(/\s+/);
     const w = size ? parseFloat(size) : 1;
     if (url && w > bestW) { best = url; bestW = w; }
@@ -93,6 +93,8 @@ function readEtagiListing($, pageUrl) {
 export function extractListing(html, pageUrl) {
   const $ = cheerio.load(html);
   const etagi = readEtagiListing($, pageUrl);
+  const { hostname, pathname } = new URL(pageUrl);
+  const isBrusnikaFlat = /(^|\.)brusnika\.ru$/i.test(hostname) && /^\/flat\/\d+\/?$/.test(pathname);
   const meta = (name) => clean($(`meta[property="${name}"]`).attr('content') || $(`meta[name="${name}"]`).attr('content'));
 
   // --- JSON-LD
@@ -157,9 +159,16 @@ export function extractListing(html, pageUrl) {
   floor = etagi?.floor ?? floor;
   floors = etagi?.floors ?? floors;
 
+  if (isBrusnikaFlat && rooms === null) {
+    const bedrooms = headText.match(/(?:с\s+)?(одной|двумя|тремя|четырьмя|[1-4])\s+спальн/i)?.[1]?.toLowerCase();
+    rooms = ({ одной: 1, двумя: 2, тремя: 3, четырьмя: 4 })[bedrooms] ?? (Number(bedrooms) || null);
+  }
+
   // --- ЖК и адрес
   const crumbs = $('[class*="breadcrumb"] a, [class*="breadcrumb"] span, [itemtype*="BreadcrumbList"] [itemprop="name"]').map((_, el) => clean($(el).text())).get();
-  const complex = clean((all.match(/(?<![\p{L}\p{N}])ЖК\s+[«"„]?\s*([А-ЯЁA-Z0-9][^,»"“|.]{1,40})/u) || [])[1])
+  const projectName = isBrusnikaFlat ? headText.match(/(?:жилом районе|жилом комплексе)\s*«([^»]+)»/i)?.[1] : null;
+  const cleanProject = (value) => clean(value).split(/[!|]|\s+(?=Количество комнат|Площадь|Цена|Этаж)/i)[0].trim();
+  const complex = cleanProject(projectName || (all.match(/(?<![\p{L}\p{N}])ЖК\s+[«"„]?\s*([А-ЯЁA-Z][^,»"“|.]{1,40})/u) || [])[1])
     || crumbs.find((c) => /^(ЖК|квартал|жилой)/i.test(c))?.replace(/^ЖК\s*/i, '') || null;
   const ldAddr = ld.find((n) => n.address)?.address;
   let address = typeof ldAddr === 'string' ? ldAddr : clean([ldAddr?.addressLocality, ldAddr?.streetAddress].filter(Boolean).join(', '));
@@ -184,17 +193,41 @@ export function extractListing(html, pageUrl) {
 
   // --- картинки-кандидаты
   const seen = new Map();
-  const isBrusnikaFlat = /(^|\.)brusnika\.ru$/i.test(new URL(pageUrl).hostname) && /^\/flat\/\d+\/?$/.test(new URL(pageUrl).pathname);
   const add = (u, weight, hint = '') => {
     const url = abs(pageUrl, u);
     if (!url || !isCandidate(url, hint) || SYSTEM_IMG.test(url)) return;
-    if (isBrusnikaFlat && !url.includes('/media/flat/')) return;
+    if (isBrusnikaFlat && !url.includes('/media/flat/') && hint !== 'brusnika-viewer') return;
     const key = imageKey(url);
     const prev = seen.get(key);
     if (!prev || weight > prev.weight) seen.set(key, { url, weight, order: prev?.order ?? seen.size });
   };
   for (const url of etagi?.images || []) add(url, 100);
-  if (!seen.size) {
+  if (isBrusnikaFlat) {
+    $('[class*="FlatDetailAboutMainViewer"] [class*="CommonDetailAboutMainViewerSlider"] img').each((_, el) => {
+      const img = $(el);
+      add(largestFromSrcset(img.attr('srcset')) || img.attr('src'), 85, 'brusnika-viewer');
+    });
+  }
+  // Галереи квартиры на проверенных сайтах. Картинки похожих квартир и баннеры туда не входят.
+  const gallery = [
+    { domain: 'delomdev.ru', path: /^\/kvartiry\/[^/]+-\d+\/?$/, selector: '.apartment-detail img' },
+    { domain: 'ludi-ludi.ru', path: /\/kvartira-\d+\/?$/, selector: '.object--lot-page .object-detail img' },
+    { domain: 'meridian72.ru', path: /^\/choose\/apartments\/\d+\/?$/, selector: '.slides img' },
+    { domain: 'talan.ru', path: /\/apartments\/[0-9a-f-]{36}\/?$/i, selector: '.apartment-slider img' },
+    { domain: 'scandia.life', path: /\/flat\/\d+\/?$/, selector: '[class^="apartment-detail"] img' },
+  ].find((entry) => (hostname === entry.domain || hostname === 'www.' + entry.domain) && entry.path.test(pathname));
+  if (gallery) {
+    $(gallery.selector).each((_, el) => {
+      const img = $(el);
+      const src = largestFromSrcset(img.attr('srcset')) || img.attr('data-src') || img.attr('src');
+      const imageUrl = abs(pageUrl, src);
+      if (!imageUrl) return;
+      const parsed = new URL(imageUrl);
+      const original = parsed.hostname === hostname && parsed.pathname === '/_next/image/' ? parsed.searchParams.get('url') : null;
+      add(original || imageUrl, 90, img.attr('alt') || '');
+    });
+  }
+  if ((!etagi && !gallery) || !seen.size) {
     const og = meta('og:image');
     if (og) add(og, 100);
     for (const n of ld) for (const img of [].concat(n.image || []).flat()) add(typeof img === 'string' ? img : img?.url || img?.contentUrl, 90);

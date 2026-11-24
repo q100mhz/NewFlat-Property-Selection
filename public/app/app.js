@@ -396,6 +396,7 @@
       <label class="ed-field"><span class="muted small">Описание для клиента (контакты продавцов и агентств уже удалены автоматически — проверьте)</span>
         <textarea class="textarea" name="description" rows="6" data-ed>${esc(o.description || '')}</textarea></label>
       <div class="ed-photos-head"><b>Фото (${photos.length})</b>
+        <button class="btn btn-light btn-sm" data-act="import-photos" ${state.editor.importingPhotos ? 'disabled' : ''}>${state.editor.importingPhotos ? 'Загружаем…' : 'Загрузить с сайта'}</button>
         <label class="btn btn-light btn-sm">+ Загрузить фото<input type="file" accept="image/jpeg,image/png,image/webp" multiple hidden data-upload></label></div>
       <div class="ed-photos">${photos.map((p, i) => `<div class="ed-photo">
         <img src="${esc(p.small)}" alt="" loading="lazy" data-broken="hide">
@@ -406,7 +407,7 @@
         </div></div>`).join('') || '<div class="muted small">Фото нет — загрузите с компьютера или из галереи телефона.</div>'}</div>
       <div class="modal__actions">
         <button class="btn btn-light" data-act="close-editor">Отмена</button>
-        <button class="btn btn-primary" data-act="save-editor" ${saving ? 'disabled' : ''}>${saving ? 'Сохраняем…' : 'Сохранить'}</button>
+        <button class="btn btn-primary" data-act="save-editor" ${saving || state.editor.importingPhotos ? 'disabled' : ''}>${saving ? 'Сохраняем…' : 'Сохранить'}</button>
       </div>
     </div></div>`;
   }
@@ -450,6 +451,26 @@
       render();
       toast('Сохранено — изменения видны во всех подборках');
     } catch (e) { state.editor.saving = false; render(); toast(e.message); }
+  }
+
+  async function importPhotos() {
+    const editor = state.editor;
+    const object = collectEditor();
+    editor.importingPhotos = true;
+    render();
+    try {
+      const { photos } = await api('/objects/' + object.id + '/photos/import', { method: 'POST' });
+      if (state.editor !== editor) return;
+      const current = collectEditor();
+      const existing = new Set((current.photos || []).map((photo) => photo.big));
+      const added = photos.filter((photo) => !existing.has(photo.big));
+      current.photos = [...(current.photos || []), ...added].slice(0, 60);
+      toast(added.length ? 'Проверьте добавленные фото и нажмите «Сохранить»' : 'Эти фото уже в карточке');
+    } catch (e) {
+      if (state.editor === editor) toast(e.message);
+    } finally {
+      if (state.editor === editor) { collectEditor(); editor.importingPhotos = false; render(); }
+    }
   }
 
   async function uploadPhotos(files) {
@@ -660,6 +681,7 @@
       case 'edit-obj': e.preventDefault(); openEditor(id); break;
       case 'close-editor': state.editor = null; render(); break;
       case 'save-editor': saveEditor(); break;
+      case 'import-photos': importPhotos(); break;
       case 'ph-left': case 'ph-right': case 'ph-del': {
         const o = collectEditor();
         const i = Number(el.dataset.i);
