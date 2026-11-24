@@ -108,3 +108,27 @@ test('Авито/ЦИАН/ДомКлик: сервер к ним не обращ
   assert.equal(row.title, '2-к квартира, 103 м²');
   assert.equal(row.url.includes('context='), false, 'метки отслеживания убраны из ссылки');
 });
+
+test('Этажи: карточка использует данные квартиры и её галерею', () => {
+  const photo = 'https://cdn.esoft.digital/object/photo.jpg';
+  const plan = 'https://cdn.esoft.digital/object/plan.png';
+  const html = `<h1>Квартира, 38,2 м²</h1>
+    <img src="https://example.com/other-flat.jpg">
+    <script>var data=${JSON.stringify({ objects: {
+      flat: { object_id: 14786647, price: '5000000', rooms: 1, square_total: 38.2, floor: 5, floors: 9, main_photo: photo },
+      groupedObjectMedia: { byType: { photos: [{ fname: photo }], layouts: [{ fname: plan }] } },
+    } })};</script>`;
+  const listing = ex.extractListing(html, 'https://www.etagi.com/realty/14786647/');
+  assert.deepEqual([listing.price, listing.rooms, listing.area_total, listing.floor, listing.floors], [5000000, 1, 38.2, 5, 9]);
+  assert.deepEqual(listing.images, [photo, plan]);
+});
+
+test('параллельный импорт сохраняет разные объекты и переиспользует один URL', async () => {
+  const a = 'https://www.avito.ru/tyumen/kvartiry/2-k._kvartira_54_m_999991';
+  const b = 'https://www.avito.ru/tyumen/kvartiry/3-k._kvartira_62_m_999992';
+  const [first, second, duplicate] = await Promise.all([a, b, a].map((url) => svc.addByLink(url, { userId: 1 })));
+  assert.notEqual(first.id, second.id);
+  assert.equal(duplicate.id, first.id);
+  assert.equal(svc.getLinkObject(first.id).row.area_total, 54);
+  assert.equal(svc.getLinkObject(second.id).row.area_total, 62);
+});

@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { domainToUnicode } from 'node:url';
-import { db } from '../db.js';
+import { db, getMeta, setMeta } from '../db.js';
 import { config } from '../config.js';
 import { safeFetch, checkUrl, FetchBlocked } from './fetcher.js';
 import { extractListing, imageSize, isContentImage } from './extract.js';
@@ -64,10 +64,12 @@ function sourceName(url, siteName) {
   return (name || h).slice(0, 60);
 }
 
-function nextId() {
-  const r = db.prepare('SELECT MAX(id) AS m FROM objects WHERE id >= ?').get(EXTERNAL_ID_BASE);
-  return Math.max(EXTERNAL_ID_BASE, (r.m || EXTERNAL_ID_BASE - 1) + 1);
-}
+const nextId = db.transaction(() => {
+  const { m } = db.prepare('SELECT MAX(id) AS m FROM objects WHERE id >= ?').get(EXTERNAL_ID_BASE);
+  const id = Math.max(EXTERNAL_ID_BASE - 1, m || 0, Number(getMeta('last_external_id')) || 0) + 1;
+  setMeta('last_external_id', id);
+  return id;
+});
 
 function svgSize(buf) {
   const head = buf.toString('utf8', 0, Math.min(buf.length, 4000));
@@ -105,16 +107,17 @@ async function downloadPhotos(objectId, candidates, referer) {
   const hashes = new Set();
   let n = 0;
   const queue = candidates.slice(0, 60);
+  const signal = AbortSignal.timeout(15000);
   const worker = async () => {
-    while (queue.length && saved.length < MAX_PHOTOS) {
+    while (!signal.aborted && queue.length && saved.length < MAX_PHOTOS) {
       const url = queue.shift();
       try {
-        const r = await safeFetch(url, { kind: 'image', referer });
+        const r = await safeFetch(url, { kind: 'image', referer, signal });
         if (r.status !== 200) continue;
         const size = inspectImage(r.body);
         if (!size) continue;
         const h = crypto.createHash('sha1').update(r.body).digest('hex');
-        if (hashes.has(h)) continue;
+        if (hashes.has(h) || saved.length >= MAX_PHOTOS) continue;
         hashes.add(h);
         const order = candidates.indexOf(url);
         saved.push({ order, src: savePhoto(objectId, `${order}-${n++}`, r.body, size.type) });
@@ -171,8 +174,21 @@ export function hintsFromUrl(url) {
  * Создаёт объект по ссылке. Если ссылка уже добавлялась — возвращает существующий объект
  * (с правками сотрудников), не перечитывая сайт.
  */
+const importsInProgress = new Map();
+
 export async function addByLink(input, session) {
-  const url = normalizeLink(input);
+  let url;
+  try { url = normalizeLink(input); } catch (err) {
+    if (err instanceof FetchBlocked) err.status = 400;
+    throw err;
+  }
+  if (importsInProgress.has(url)) return importsInProgress.get(url);
+  const pending = importListing(url, session).finally(() => importsInProgress.delete(url));
+  importsInProgress.set(url, pending);
+  return pending;
+}
+
+async function importListing(url, session) {
   const existing = db.prepare("SELECT id, needs_edit, edited_at FROM objects WHERE url = ? AND source = 'link'").get(url);
   // уже добавленный объект возвращаем как есть (с правками); нетронутый черновик — пробуем прочитать заново
   if (existing && !(existing.needs_edit && !existing.edited_at)) return { id: existing.id, existed: true };
@@ -186,7 +202,9 @@ export async function addByLink(input, session) {
   } else try {
     const page = await safeFetch(url, { kind: 'page' });
     const html = page.body.toString('utf8');
-    if (page.status >= 400 || BLOCK_PAGE.test(html.slice(0, 20000)) && html.length < 60000) {
+    if (page.status === 404 || page.status === 410) {
+      reason = 'Объявление удалено или снято с публикации. Проверьте ссылку.';
+    } else if (page.status >= 400 || BLOCK_PAGE.test(html.slice(0, 20000)) && html.length < 60000) {
       reason = 'Сайт не отдаёт объявление автоматически (защита от роботов). Заполните карточку вручную.';
     } else if (!/text\/html|xhtml/i.test(page.type)) {
       reason = 'По ссылке не страница сайта. Заполните карточку вручную.';
@@ -201,6 +219,7 @@ export async function addByLink(input, session) {
 
   if (existing && reason) return { id, existed: true, warning: reason }; // повторная попытка не удалась — черновик остаётся
   const photos = data?.images?.length ? await downloadPhotos(id, data.images, url) : [];
+  if (data && !photos.length) reason ||= 'Характеристики загружены. Фото с сайта получить не удалось, их можно добавить вручную.';
   const src = sourceName(url, data?.siteName);
   const o = {
     id, url,

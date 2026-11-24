@@ -710,7 +710,7 @@
       input.value = '';
       render();
       // по ссылке с другого сайта — сразу показать карточку для проверки (черновик — обязательно)
-      if (o.source === 'link' && !o.existed) openEditor(o.id, o.warning || 'Проверьте данные и фото — они взяты со страницы автоматически.');
+      if (o.source === 'link' && (!o.existed || o.needsEdit)) openEditor(o.id, o.warning || 'Проверьте данные и фото — они взяты со страницы автоматически.');
     } catch (err) {
       toast(err.message);
       btn.disabled = false; btn.textContent = 'Добавить';

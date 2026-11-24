@@ -62,8 +62,37 @@ function walkJsonLd(node, out) {
   for (const v of Object.values(node)) if (v && typeof v === 'object') walkJsonLd(v, out);
 }
 
+/** Данные конкретной публичной карточки, встроенные «Этажами» в HTML. */
+function readEtagiListing($, pageUrl) {
+  const { hostname, pathname } = new URL(pageUrl);
+  if (!/(^|\.)etagi\.com$/i.test(hostname)) return null;
+  const id = pathname.match(/\/(\d+)\/?$/)?.[1];
+  if (!id) return null;
+  for (const script of $('script').toArray()) {
+    const body = $(script).text().trim();
+    const data = body.match(/^var data\s*=\s*(\{[\s\S]*\})\s*;?$/)?.[1];
+    if (!data) continue;
+    try {
+      const { objects } = JSON.parse(data);
+      const flat = objects?.flat;
+      if (String(flat?.object_id) !== id) continue;
+      const media = objects.groupedObjectMedia?.byType;
+      return {
+        price: toNum(flat.price), rooms: flat.studio === true ? 0 : toNum(flat.rooms),
+        area_total: toNum(flat.square_total ?? flat.square), area_kitchen: toNum(flat.square_kitchen),
+        area_living: toNum(flat.square_living), floor: toNum(flat.floor), floors: toNum(flat.floors),
+        description: clean(flat.notes),
+        images: [flat.main_photo, ...(media?.photos || []).map((item) => item.fname),
+          ...(media?.layouts || []).map((item) => item.fname)],
+      };
+    } catch { /* формат страницы изменился — используем общий разбор */ }
+  }
+  return null;
+}
+
 export function extractListing(html, pageUrl) {
   const $ = cheerio.load(html);
+  const etagi = readEtagiListing($, pageUrl);
   const meta = (name) => clean($(`meta[property="${name}"]`).attr('content') || $(`meta[name="${name}"]`).attr('content'));
 
   // --- JSON-LD
@@ -87,7 +116,7 @@ export function extractListing(html, pageUrl) {
   const all = headText + ' | ' + bodyText;
 
   // --- цена
-  let price = toNum(ldOffer?.price ?? ldOffer?.offers?.price ?? ldOffer?.lowPrice);
+  let price = etagi?.price ?? toNum(ldOffer?.price ?? ldOffer?.offers?.price ?? ldOffer?.lowPrice);
   if (!price) {
     const m = headText.match(/(\d{1,3}(?:[  ]\d{3}){2,}|\d{6,10})\s*(?:₽|руб|р\.)/i) || bodyText.match(/(\d{1,3}(?:[  ]\d{3}){2,})\s*(?:₽|руб)/i);
     price = m ? toNum(m[1]) : null;
@@ -96,12 +125,12 @@ export function extractListing(html, pageUrl) {
 
   // --- площади
   const areaRe = /(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:м²|м2|м\s?2|кв\.?\s*м)/i;
-  let area_total = toNum((headText.match(areaRe) || [])[1]);
+  let area_total = etagi?.area_total ?? toNum((headText.match(areaRe) || [])[1]);
   const mTotal = all.match(/(?:общая\s+площадь|площадь\s+общая|площадь)\s*[:\-–]?\s*(\d{1,4}(?:[.,]\d{1,2})?)/i);
   if (!area_total && mTotal) area_total = toNum(mTotal[1]);
   if (!area_total) area_total = toNum((bodyText.match(areaRe) || [])[1]);
-  const area_kitchen = toNum((all.match(/(?:площадь\s+)?кухн[яи][^\d]{0,20}(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:м|кв)/i) || [])[1]);
-  const area_living = toNum((all.match(/жил(?:ая|ой)\s*(?:площадь)?[^\d]{0,15}(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:м|кв)/i) || [])[1]);
+  const area_kitchen = etagi?.area_kitchen ?? toNum((all.match(/(?:площадь\s+)?кухн[яи][^\d]{0,20}(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:м|кв)/i) || [])[1]);
+  const area_living = etagi?.area_living ?? toNum((all.match(/жил(?:ая|ой)\s*(?:площадь)?[^\d]{0,15}(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:м|кв)/i) || [])[1]);
 
   // --- комнаты
   let rooms = null;
@@ -124,9 +153,13 @@ export function extractListing(html, pageUrl) {
     floors = fl ? Number(fl[1]) : null;
   }
 
+  rooms = etagi?.rooms ?? rooms;
+  floor = etagi?.floor ?? floor;
+  floors = etagi?.floors ?? floors;
+
   // --- ЖК и адрес
   const crumbs = $('[class*="breadcrumb"] a, [class*="breadcrumb"] span, [itemtype*="BreadcrumbList"] [itemprop="name"]').map((_, el) => clean($(el).text())).get();
-  const complex = clean((all.match(/ЖК\s*[«"„]?\s*([А-ЯЁA-Z0-9][^,»"“|.]{1,40})/) || [])[1])
+  const complex = clean((all.match(/(?<![\p{L}\p{N}])ЖК\s+[«"„]?\s*([А-ЯЁA-Z0-9][^,»"“|.]{1,40})/u) || [])[1])
     || crumbs.find((c) => /^(ЖК|квартал|жилой)/i.test(c))?.replace(/^ЖК\s*/i, '') || null;
   const ldAddr = ld.find((n) => n.address)?.address;
   let address = typeof ldAddr === 'string' ? ldAddr : clean([ldAddr?.addressLocality, ldAddr?.streetAddress].filter(Boolean).join(', '));
@@ -151,40 +184,45 @@ export function extractListing(html, pageUrl) {
 
   // --- картинки-кандидаты
   const seen = new Map();
+  const isBrusnikaFlat = /(^|\.)brusnika\.ru$/i.test(new URL(pageUrl).hostname) && /^\/flat\/\d+\/?$/.test(new URL(pageUrl).pathname);
   const add = (u, weight, hint = '') => {
     const url = abs(pageUrl, u);
     if (!url || !isCandidate(url, hint) || SYSTEM_IMG.test(url)) return;
+    if (isBrusnikaFlat && !url.includes('/media/flat/')) return;
     const key = imageKey(url);
     const prev = seen.get(key);
     if (!prev || weight > prev.weight) seen.set(key, { url, weight, order: prev?.order ?? seen.size });
   };
-  const og = meta('og:image');
-  if (og) add(og, 100);
-  for (const n of ld) for (const img of [].concat(n.image || []).flat()) add(typeof img === 'string' ? img : img?.url || img?.contentUrl, 90);
-  $('img, source').each((_, el) => {
-    const $el = $(el);
-    if ($el.closest(SYSTEM_CONTAINER).length) return;
-    const hint = `${$el.attr('alt') || ''} ${$el.attr('class') || ''} ${$el.attr('id') || ''}`;
-    if (SYSTEM_IMG.test(hint)) return;
-    const w = Number($el.attr('width')) || 0;
-    const h = Number($el.attr('height')) || 0;
-    if ((w && w < 200) || (h && h < 150)) return;
-    const src = largestFromSrcset($el.attr('srcset') || $el.attr('data-srcset') || '')
-      || $el.attr('data-src') || $el.attr('data-lazy') || $el.attr('data-original') || $el.attr('data-full') || $el.attr('src');
-    const isGallery = /gallery|slider|swiper|photo|plan|layout|планир|фото/i.test(hint + ($el.parent().attr('class') || ''));
-    add(src, PLAN_HINT.test(String(src) + hint) ? 80 : isGallery ? 60 : 40, hint);
-  });
-  // адреса картинок в атрибутах (style="background-image", data-*) и в данных страницы
-  const raw = html.replace(/<(header|footer|nav)\b[\s\S]*?<\/\1>/gi, '');
-  for (const m of raw.matchAll(/https?:\/\/[^\s"'()<>\\]+?\.(?:jpe?g|png|webp|avif|svg)(?:@[a-z]+)?(?:\?[^\s"'()<>\\]*)?(?=["'()\s<>\\])/gi)) {
-    add(m[0], PLAN_HINT.test(m[0]) ? 75 : 30);
+  for (const url of etagi?.images || []) add(url, 100);
+  if (!seen.size) {
+    const og = meta('og:image');
+    if (og) add(og, 100);
+    for (const n of ld) for (const img of [].concat(n.image || []).flat()) add(typeof img === 'string' ? img : img?.url || img?.contentUrl, 90);
+    $('img, source').each((_, el) => {
+      const $el = $(el);
+      if ($el.closest(SYSTEM_CONTAINER).length) return;
+      const hint = `${$el.attr('alt') || ''} ${$el.attr('class') || ''} ${$el.attr('id') || ''}`;
+      if (SYSTEM_IMG.test(hint)) return;
+      const w = Number($el.attr('width')) || 0;
+      const h = Number($el.attr('height')) || 0;
+      if ((w && w < 200) || (h && h < 150)) return;
+      const src = largestFromSrcset($el.attr('srcset') || $el.attr('data-srcset') || '')
+        || $el.attr('data-src') || $el.attr('data-lazy') || $el.attr('data-original') || $el.attr('data-full') || $el.attr('src');
+      const isGallery = /gallery|slider|swiper|photo|plan|layout|планир|фото/i.test(hint + ($el.parent().attr('class') || ''));
+      add(src, PLAN_HINT.test(String(src) + hint) ? 80 : isGallery ? 60 : 40, hint);
+    });
+    // адреса картинок в атрибутах (style="background-image", data-*) и в данных страницы
+    const raw = html.replace(/<(header|footer|nav)\b[\s\S]*?<\/\1>/gi, '');
+    for (const m of raw.matchAll(/https?:\/\/[^\s"'()<>\\]+?\.(?:jpe?g|png|webp|avif|svg)(?:@[a-z]+)?(?:\?[^\s"'()<>\\]*)?(?=["'()\s<>\\])/gi)) {
+      add(m[0], PLAN_HINT.test(m[0]) ? 75 : 30);
+    }
+    $('a[href]').each((_, el) => {
+      const $el = $(el);
+      if ($el.closest(SYSTEM_CONTAINER).length) return;
+      const href = $el.attr('href');
+      if (IMG_EXT.test(href || '')) add(href, 70); // ссылки на полноразмерные фото в галереях
+    });
   }
-  $('a[href]').each((_, el) => {
-    const $el = $(el);
-    if ($el.closest(SYSTEM_CONTAINER).length) return;
-    const href = $el.attr('href');
-    if (IMG_EXT.test(href || '')) add(href, 70); // ссылки на полноразмерные фото в галереях
-  });
   const images = [...seen.values()].sort((a, b) => b.weight - a.weight || a.order - b.order).map((x) => x.url).slice(0, 80);
 
   const roomsTxt = rooms === 0 ? 'Студия' : rooms ? `${rooms}-к квартира` : 'Квартира';
@@ -197,7 +235,7 @@ export function extractListing(html, pageUrl) {
     rooms, floor, floors, area_total, area_living, area_kitchen,
     address: address || null,
     complex,
-    description: description.slice(0, 5000),
+    description: (etagi?.description || description).slice(0, 5000),
     images,
   };
 }

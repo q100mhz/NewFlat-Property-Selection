@@ -70,14 +70,14 @@ export function checkUrl(input) {
 }
 
 /** Загрузка с проверками. kind: 'page' | 'image'. */
-export async function safeFetch(url, { kind = 'page', referer } = {}) {
+export async function safeFetch(url, { kind = 'page', referer, signal = AbortSignal.timeout(25000) } = {}) {
   const maxBytes = kind === 'image' ? 15 * 1024 * 1024 : 5 * 1024 * 1024;
   let current = checkUrl(url);
   for (let hop = 0; hop <= 5; hop++) {
     const res = await undiciFetch(current, {
       dispatcher: agent,
       redirect: 'manual',
-      signal: AbortSignal.timeout(25000),
+      signal,
       headers: {
         'User-Agent': UA,
         'Accept-Language': 'ru-RU,ru;q=0.9',
